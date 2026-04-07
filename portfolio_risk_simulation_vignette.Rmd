@@ -1,0 +1,1261 @@
+---
+title: "Introduction to the mcst package."
+subtitle: "Monte carlo portfolio risk with stress testing simulations."
+author: "Caleb Ong"
+date: "January 16, 2026"
+# In portfolio_risk_simulation_vignette.Rmd:
+vignette: >
+  %\VignetteIndexEntry{Portfolio Risk Simulation: Vignette}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+output:
+  pdf_document:
+    toc: true
+    toc_depth: 3
+    number_sections: true
+    highlight: tango
+    latex_engine: xelatex
+    keep_tex: false
+geometry: "top=1in, bottom=1in, left=1in, right=1in"
+fontsize: 11pt
+# mainfont: "Helvetica"
+# monofont: "Courier New"
+header-includes:
+  # - \usepackage{unicode-math}
+  # - \setmathfont{Latin Modern Math}
+  # - \usepackage{lmodern}
+  # - \usepackage[T1]{fontenc}
+  - \usepackage{booktabs}
+  - \usepackage{longtable}
+  - \usepackage{array}
+  - \usepackage{multirow}
+  - \usepackage{xcolor}
+  - \usepackage{amsmath}
+  - \usepackage{amssymb}
+  - \usepackage{fontspec}
+  - \usepackage{float}
+  - \newcommand{\blandscape}{\begin{landscape}}
+  - \newcommand{\elandscape}{\end{landscape}}
+  - \definecolor{deepblue}{RGB}{31,78,121}
+  - \definecolor{midblue}{RGB}{46,117,182}
+  - \setlength{\LTpost}{0pt}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo      = TRUE,
+  warning   = FALSE,
+  message   = FALSE,
+  eval      = FALSE,   # set to TRUE when running with real data
+  fig.align = "center",
+  fig.width = 8,
+  fig.height = 5
+)
+library(knitr)
+library(kableExtra)
+library(DiagrammeR)
+library(DiagrammeRsvg)
+library(rsvg)
+```
+
+\newpage
+
+# Introduction
+
+The `portfolio_risk_simulation` function is a self-contained, end-to-end analytical engine for multi-asset portfolio risk modelling. Given a historical return series for a set of assets, it estimates the joint return distribution, constructs a forward-looking covariance matrix, simulates thousands of portfolio return paths, and - if specificed - applies structured stress scenarios to quantify how shocks propagate across assets. Its design philosophy is that a risk practitioner should be able to move from raw returns data to a fully characterised risk distribution in a single function call.
+
+
+## Core Use Cases
+
+- **Portfolio VaR and CVaR:** Simulate the full distribution of weekly or monthly portfolio returns and extract tail-risk metrics.
+- **Distribution selection:** Choose between Gaussian, Student-$t$, or Skewed Generalised $t$ (SGT) marginals, with or without a copula-based dependence structure.
+- **Volatility regime awareness:**Choose between historical, EWMA, or GJR-GARCH conditional volatility for the forward-looking covariance.
+- **Stress testing:** Apply mean and/or volatility shocks to individual portfolio assets (endogenous) or to external instruments (exogenous), and observe how the shock propagates through the portfolio correlation structure.
+- **Diagnostic visualisation:** Inspect marginal distributions, copula fit, covariance structure, and tail dependence.
+
+## General Workflow
+
+The function executes the following pipeline sequentially:
+
+```{r workflow-table, echo=FALSE, eval=TRUE}
+wf <- data.frame(
+  Step = c("1","1.5","2","3","4","5","6","6.5","7","8","9/10"),
+  Label = c("Data Preprocessing","Calibrate Parameters","Weights Processing",
+             "Fit Marginal Distributions","Forward-Looking Volatility",
+             "Fit Copula","Build Covariance Matrix","Latent Diagnostics",
+             "Stress Testing","Simulate Returns","Statistics & Plots"),
+  Description = c(
+    "Validate inputs, detect return frequency, compute summary statistics.",
+    "Fit distribution-specific parameters (df, skewness, tail shape) to each asset.",
+    "Accept equal, custom, or sweep-weight matrices; set simulation draw count.",
+    "Fit Normal, t, or SGT marginals per asset; optionally transform to uniform PIT scores.",
+    "Estimate forward variances via sample covariance, EWMA, or GJR-GARCH.",
+    "Fit Gaussian or t-copula to the PIT residuals; extract correlation and tail dependence.",
+    "Combine forward vol (D) and copula correlation (rho) into Sigma = D rho D.",
+    "Compare latent (uniform) space to observed space; run KS uniformity test.",
+    "Apply endogenous and/or exogenous shocks; propagate via Schur complement.",
+    "Draw from the fitted joint distribution; compute portfolio return distributions.",
+    "Compute risk metrics; produce diagnostic visualisations."
+  ),
+  stringsAsFactors = FALSE
+)
+kable(wf, booktabs = TRUE, longtable = FALSE,
+      col.names = c("Step","Label","Description"),
+      caption = "Pipeline summary") %>%
+  kable_styling(latex_options = c("hold_position","scale_down"),
+                font_size = 9) %>%
+  column_spec(1, width = "0.5cm") %>%
+  column_spec(2, width = "3.5cm") %>%
+  column_spec(3, width = "9cm")
+```
+
+\newpage
+
+````{r pipeline-diagram, echo=FALSE, eval=TRUE, fig.cap="portfolio\\_risk\\_simulation() pipeline.", fig.width=10, fig.height=14, out.width="100%", fig.pos='H', message=FALSE, warning=FALSE}
+
+# ── Required packages ─────────────────────────────────────────────────────────
+if (!requireNamespace("DiagrammeR",    quietly = TRUE)) install.packages("DiagrammeR")
+if (!requireNamespace("DiagrammeRsvg", quietly = TRUE)) install.packages("DiagrammeRsvg")
+if (!requireNamespace("rsvg",          quietly = TRUE)) install.packages("rsvg")
+
+library(DiagrammeR)
+library(DiagrammeRsvg)
+library(rsvg)
+
+# ── Colour palette ────────────────────────────────────────────────────────────
+# Nodes are colour-coded by role:
+#   INPUT/OUTPUT  : deep slate blue
+#   Process step  : steel blue
+#   Decision      : amber / gold
+#   Branch option : muted teal (non-stress) or coral (stress)
+#   Intermediate  : light grey-blue
+
+dot_code <- "
+digraph pipeline {
+
+  # ── Graph-level settings ──────────────────────────────────────────────────
+  graph [
+    rankdir    = TB,
+    splines    = ortho,
+    nodesep    = 0.25,
+    ranksep    = 0.35,
+    fontname   = 'Helvetica',
+    fontsize   = 14,
+    bgcolor    = 'white'
+  ]
+
+  # ── Default node style ────────────────────────────────────────────────────
+  node [
+    fontname  = 'Helvetica',
+    fontsize  = 12,
+    style     = 'filled,rounded',
+    penwidth  = 1.4,
+    margin    = '0.12,0.08'
+  ]
+
+  # ── Default edge style ────────────────────────────────────────────────────
+  edge [
+    fontname  = 'Helvetica',
+    fontsize  = 11,
+    color     = '#555555',
+    penwidth  = 1.2,
+    arrowsize = 0.75
+  ]
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # NODES
+  # ══════════════════════════════════════════════════════════════════════════
+
+  # ── Inputs ────────────────────────────────────────────────────────────────
+  INPUT [
+    label     = 'INPUTS\nhistorical_returns\nweights  |  n_sim_returns\nsim_returns_dist  |  seed',
+    shape     = parallelogram,
+    fillcolor = '#1F4E79',
+    fontcolor = 'white',
+    fontsize  = 13
+  ]
+
+  # ── Step 1: Preprocessing ─────────────────────────────────────────────────
+  STEP1 [
+    label     = 'Step 1  ·  Data Preprocessing\nDetect date column  →  infer frequency\n(daily / weekly / monthly)\nCompute empirical summary statistics',
+    shape     = box,
+    fillcolor = '#2E75B6',
+    fontcolor = 'white'
+  ]
+
+  # ── Step 1.7: Exogenous decision ─────────────────────────────────────────
+  EXOG_Q [
+    label     = 'exogenous_returns\nprovided?',
+    shape     = diamond,
+    fillcolor = '#F5A623',
+    fontcolor = '#1a1a1a',
+    fontsize  = 12
+  ]
+
+  EXOG_NO [
+    label     = 'No exogenous\ninstruments',
+    shape     = box,
+    fillcolor = '#D9EAD3',
+    fontcolor = '#1a1a1a',
+    style     = 'filled,rounded,dashed'
+  ]
+
+  EXOG_YES [
+    label     = 'Step 1.7  ·  Exogenous Preprocessing\nAlign dates  →  compute\nSigma_pe  (cross-cov)\nSigma_ee  (exog cov)',
+    shape     = box,
+    fillcolor = '#C9DAF8',
+    fontcolor = '#1a1a1a'
+  ]
+
+  # ── Step 1.5 / 3: Distribution & Calibration ─────────────────────────────
+  DIST_Q [
+    label     = 'sim_returns_dist?',
+    shape     = diamond,
+    fillcolor = '#F5A623',
+    fontcolor = '#1a1a1a',
+    fontsize  = 12
+  ]
+
+  DIST_NORM [
+    label     = 'rmvnorm\nMultivariate Normal\n(mean, Sigma)',
+    shape     = box,
+    fillcolor = '#E8F4FD',
+    fontcolor = '#1a1a1a'
+  ]
+
+  DIST_T [
+    label     = 'rmvt\nMultivariate t\n(mean, Sigma, df)',
+    shape     = box,
+    fillcolor = '#E8F4FD',
+    fontcolor = '#1a1a1a'
+  ]
+
+  DIST_SGT [
+    label     = 'rsgt\nSkewed Gen. t\n(mean, sd, lambda, p, q)',
+    shape     = box,
+    fillcolor = '#E8F4FD',
+    fontcolor = '#1a1a1a'
+  ]
+
+  CALIB_Q [
+    label     = 'calibrate_params?',
+    shape     = diamond,
+    fillcolor = '#F5A623',
+    fontcolor = '#1a1a1a',
+    fontsize  = 12
+  ]
+
+  CALIB_NO [
+    label     = 'Use user-supplied\nor default params',
+    shape     = box,
+    fillcolor = '#D9EAD3',
+    fontcolor = '#1a1a1a',
+    style     = 'filled,rounded,dashed'
+  ]
+
+  CALIB_YES [
+    label     = 'Step 1.5  ·  Calibrate Parameters\ncalibration_method:\n[tail] match kurtosis\n[full] match 4 moments',
+    shape     = box,
+    fillcolor = '#C9DAF8',
+    fontcolor = '#1a1a1a'
+  ]
+
+  # ── Step 2: Weights ───────────────────────────────────────────────────────
+  STEP2 [
+    label     = 'Step 2  ·  Weights\nNULL  →  equal 1/N\nNamed vector / list\nData frame (multi-weight sweep)',
+    shape     = box,
+    fillcolor = '#2E75B6',
+    fontcolor = 'white'
+  ]
+
+  # ── Step 3: Fit Marginals ─────────────────────────────────────────────────
+  STEP3 [
+    label     = 'Step 3  ·  Fit Marginal Distributions\nFit Normal / t / SGT per asset\ncopula=TRUE: apply PIT  →  u_i = F_i(x_i)',
+    shape     = box,
+    fillcolor = '#2E75B6',
+    fontcolor = 'white'
+  ]
+
+  # ── Step 4: Forward Vol ───────────────────────────────────────────────────
+  COV_Q [
+    label     = 'cov_estimation?',
+    shape     = diamond,
+    fillcolor = '#F5A623',
+    fontcolor = '#1a1a1a',
+    fontsize  = 12
+  ]
+
+  COV_SAMPLE [
+    label     = 'sample\nHistorical cov\n(equal weights)',
+    shape     = box,
+    fillcolor = '#E8F4FD',
+    fontcolor = '#1a1a1a'
+  ]
+
+  COV_EWMA [
+    label     = 'ewma\nRiskMetrics recursion\ncov_lambda (default 0.97)',
+    shape     = box,
+    fillcolor = '#E8F4FD',
+    fontcolor = '#1a1a1a'
+  ]
+
+  COV_GARCH [
+    label     = 'garch\nGJR-GARCH(1,1)\n1-step forecast + leverage',
+    shape     = box,
+    fillcolor = '#E8F4FD',
+    fontcolor = '#1a1a1a'
+  ]
+
+  FWDVOL [
+    label     = 'D = diag(sigma_1,...,sigma_n)\nForward-looking vols',
+    shape     = box,
+    fillcolor = '#C9DAF8',
+    fontcolor = '#1a1a1a'
+  ]
+
+  # ── Step 5: Copula ────────────────────────────────────────────────────────
+  COP_Q [
+    label     = 'copula = TRUE?',
+    shape     = diamond,
+    fillcolor = '#F5A623',
+    fontcolor = '#1a1a1a',
+    fontsize  = 12
+  ]
+
+  COP_NO [
+    label     = 'rho = Pearson corr\nfrom historical cov',
+    shape     = box,
+    fillcolor = '#D9EAD3',
+    fontcolor = '#1a1a1a',
+    style     = 'filled,rounded,dashed'
+  ]
+
+  COP_TYPE [
+    label     = 'copula_type?',
+    shape     = diamond,
+    fillcolor = '#F5A623',
+    fontcolor = '#1a1a1a',
+    fontsize  = 12
+  ]
+
+  COP_GAUSS [
+    label     = 'gaussian\nFit Gaussian copula\nrho = correlation matrix',
+    shape     = box,
+    fillcolor = '#E8F4FD',
+    fontcolor = '#1a1a1a'
+  ]
+
+  COP_T [
+    label     = 't\nFit t-copula\nrho + df (profile MLE)\nTail dependence lambda',
+    shape     = box,
+    fillcolor = '#E8F4FD',
+    fontcolor = '#1a1a1a'
+  ]
+
+  COP_TIER [
+    label     = 'Tiered structure:\nun / toep / ex / itau\n(obs-to-param ratio)',
+    shape     = box,
+    fillcolor = '#C9DAF8',
+    fontcolor = '#1a1a1a'
+  ]
+
+  # ── Step 6: Sigma assembly ────────────────────────────────────────────────
+  STEP6 [
+    label     = 'Step 6  ·  Assemble Sigma\nSigma = D * rho * D\nForward vol x Copula corr',
+    shape     = box,
+    fillcolor = '#2E75B6',
+    fontcolor = 'white'
+  ]
+
+  # ── Step 6.5: Latent diagnostics ──────────────────────────────────────────
+  STEP65 [
+    label     = 'Step 6.5  ·  Diagnostics (copula path)\nKS uniformity test on PIT scores',
+    shape     = box,
+    fillcolor = '#2E75B6',
+    fontcolor = 'white',
+    style     = 'filled,rounded,dashed'
+  ]
+
+  # ── Step 7: Stress testing ────────────────────────────────────────────────
+  STRESS_Q [
+    label     = 'Any shock\nspecified?',
+    shape     = diamond,
+    fillcolor = '#F5A623',
+    fontcolor = '#1a1a1a',
+    fontsize  = 12
+  ]
+
+  NO_STRESS [
+    label     = 'No stress\nbase Sigma and mu',
+    shape     = box,
+    fillcolor = '#D9EAD3',
+    fontcolor = '#1a1a1a',
+    style     = 'filled,rounded,dashed'
+  ]
+
+  ENDO_RET [
+    label     = 'asset_shock\nEndogenous return shock\ndelta_i per asset',
+    shape     = box,
+    fillcolor = '#FCE5CD',
+    fontcolor = '#1a1a1a'
+  ]
+
+  ENDO_VOL [
+    label     = 'volatility_shock\nEndogenous vol shock\nSigma = Sigma x outer(k,k)',
+    shape     = box,
+    fillcolor = '#FCE5CD',
+    fontcolor = '#1a1a1a'
+  ]
+
+  EXOG_RET [
+    label     = 'exogenous_shock\nExog return shock\ndelta_e per instrument',
+    shape     = box,
+    fillcolor = '#FCE5CD',
+    fontcolor = '#1a1a1a'
+  ]
+
+  EXOG_VOL [
+    label     = 'exogenous_volatility_shock\nExog vol shock\nLTV addon to Sigma_pp',
+    shape     = box,
+    fillcolor = '#FCE5CD',
+    fontcolor = '#1a1a1a'
+  ]
+
+  SCHUR [
+    label     = 'Schur Propagation (if propagation=TRUE)\nmu_n|s = mu_n + Sigma_ns * Sigma_ss^-1 * delta_s\nStressed mu per asset',
+    shape     = box,
+    fillcolor = '#EA9999',
+    fontcolor = '#1a1a1a'
+  ]
+
+  STRESSED [
+    label     = 'Stressed Sigma  +  Stressed mu',
+    shape     = box,
+    fillcolor = '#CC0000',
+    fontcolor = 'white'
+  ]
+
+  # ── Step 8: Simulate ──────────────────────────────────────────────────────
+  STEP8 [
+    label     = 'Step 8  ·  Simulate Returns\nn_sim_returns draws\nPre-stress  +  Post-stress (if stressed)\nasset_draws  |  asset_draws_stress',
+    shape     = box,
+    fillcolor = '#2E75B6',
+    fontcolor = 'white'
+  ]
+
+  # ── Steps 9-10: Stats and Plots ───────────────────────────────────────────
+  STEP9 [
+    label     = 'Step 9  ·  Portfolio Statistics\nMean | Vol | Skewness | Kurtosis\nVaR 90/95/99  |  CVaR 90/95/99\nSharpe  |  Annual return',
+    shape     = box,
+    fillcolor = '#2E75B6',
+    fontcolor = 'white'
+  ]
+
+  STEP10 [
+    label     = 'Step 10  ·  Diagnostic Plots',
+    shape     = box,
+    fillcolor = '#2E75B6',
+    fontcolor = 'white'
+  ]
+
+  # ── Output ────────────────────────────────────────────────────────────────
+  OUTPUT [
+    label     = 'RESULT OBJECT',
+    shape     = parallelogram,
+    fillcolor = '#1F4E79',
+    fontcolor = 'white',
+    fontsize  = 12
+  ]
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # EDGES  (main spine)
+  # ══════════════════════════════════════════════════════════════════════════
+
+  INPUT  -> STEP1
+  STEP1  -> EXOG_Q
+  EXOG_Q -> EXOG_NO  [label = 'No']
+  EXOG_Q -> EXOG_YES [label = 'Yes']
+
+  EXOG_NO  -> DIST_Q
+  EXOG_YES -> DIST_Q
+
+  DIST_Q -> DIST_NORM [label = 'rmvnorm']
+  DIST_Q -> DIST_T    [label = 'rmvt']
+  DIST_Q -> DIST_SGT  [label = 'rsgt']
+
+  DIST_NORM -> CALIB_Q
+  DIST_T    -> CALIB_Q
+  DIST_SGT  -> CALIB_Q
+
+  CALIB_Q  -> CALIB_NO  [label = 'FALSE']
+  CALIB_Q  -> CALIB_YES [label = 'TRUE']
+
+  CALIB_NO  -> STEP2
+  CALIB_YES -> STEP2
+
+  STEP2 -> STEP3
+
+  STEP3 -> COV_Q
+
+  COV_Q -> COV_SAMPLE [label = 'sample']
+  COV_Q -> COV_EWMA   [label = 'ewma']
+  COV_Q -> COV_GARCH  [label = 'garch']
+
+  COV_SAMPLE -> FWDVOL
+  COV_EWMA   -> FWDVOL
+  COV_GARCH  -> FWDVOL
+
+  FWDVOL -> COP_Q
+
+  COP_Q -> COP_NO   [label = 'FALSE']
+  COP_Q -> COP_TYPE [label = 'TRUE']
+
+  COP_TYPE -> COP_GAUSS [label = 'gaussian']
+  COP_TYPE -> COP_T     [label = 't']
+
+  COP_GAUSS -> COP_TIER
+  COP_T     -> COP_TIER
+
+  COP_NO   -> STEP6
+  COP_TIER -> STEP6
+
+  STEP6 -> STEP65 [style = dashed, label = 'copula path']
+  STEP6 -> STRESS_Q
+  STEP65 -> STRESS_Q
+
+  STRESS_Q -> NO_STRESS [label = 'No']
+  STRESS_Q -> ENDO_RET  [label = 'asset_shock']
+  STRESS_Q -> ENDO_VOL  [label = 'volatility_shock']
+  STRESS_Q -> EXOG_RET  [label = 'exogenous_shock']
+  STRESS_Q -> EXOG_VOL  [label = 'exog_vol_shock']
+
+  ENDO_RET -> SCHUR
+  EXOG_RET -> SCHUR
+  ENDO_VOL -> STRESSED
+  EXOG_VOL -> STRESSED
+  SCHUR    -> STRESSED
+
+  NO_STRESS -> STEP8
+  STRESSED  -> STEP8
+
+  STEP8  -> STEP9
+  STEP9  -> STEP10
+  STEP10 -> OUTPUT
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # RANK GROUPS  (force nodes onto the same horizontal level)
+  # ══════════════════════════════════════════════════════════════════════════
+
+  { rank = same; DIST_NORM; DIST_T; DIST_SGT }
+  { rank = same; CALIB_NO; CALIB_YES }
+  { rank = same; COV_SAMPLE; COV_EWMA; COV_GARCH }
+  { rank = same; COP_NO; COP_TYPE }
+  { rank = same; COP_GAUSS; COP_T }
+  { rank = same; EXOG_NO; EXOG_YES }
+  { rank = same; ENDO_RET; ENDO_VOL; EXOG_RET; EXOG_VOL; NO_STRESS }
+
+}
+"
+
+# ── Render ─────────────────────────────────────────────────────────────────────
+grv     <- grViz(dot_code)
+svg_out <- DiagrammeRsvg::export_svg(grv)          # character string of SVG XML
+svg_raw <- charToRaw(svg_out)                       # convert to raw bytes (required by rsvg)
+tmp_png <- tempfile(fileext = ".png")
+rsvg::rsvg_png(svg_raw, file = tmp_png,            # write directly to file
+               width = 2800, height = 3800)
+knitr::include_graphics(tmp_png)
+
+````
+
+\newpage
+
+
+
+# Data Preprocessing  (Step 1)
+
+## Input Data Frames
+
+The primary input is `historical_returns`, a data frame (or tibble) with one column per asset and one row per observation period. A date column is optional but highly recommended: the function uses it to infer the return frequency automatically.
+
+An optional second data frame, `exogenous_returns`, holds time series for instruments that are *not* in the portfolio - for example a broad equity index, or oil futures price. These instruments are not included in the simulation draws but serve as shock channels in the stress-testing step.
+
+## Automatic Frequency Detection
+
+The function computes the median gap (in calendar days) between consecutive observations and classifies the series as follows:
+
+```{r freq-table, echo=FALSE, eval=TRUE}
+ft <- data.frame(
+  Frequency = c("Daily","Weekly","Monthly"),
+  Condition = c("Median gap <= 5 days","Median gap <= 10 days","All other gaps"),
+  Periods = c("252","52","12"),
+  stringsAsFactors = FALSE
+)
+kable(ft, booktabs = TRUE, escape = TRUE,
+      col.names = c("Frequency","Detection Condition","Periods / Year"),
+      caption = "Automatic frequency detection rules") %>%
+  kable_styling(latex_options = "hold_position")
+```
+
+## Portfolio Summary Statistics
+
+After frequency detection, the function prints per-asset summary statistics and stores them in `result$asset_empirical_summary`.
+
+\newpage
+
+# Calibrating Distribution Parameters  (Step 1.5)
+
+## Choosing a Return Distribution
+
+The argument `sim_returns_dist` selects the distribution used to simulate future asset returns. Three options are available:
+
+```{r dist-table, echo=FALSE, eval=TRUE}
+dt <- data.frame(
+  Distribution = c("`rmvnorm`","`rmvt`","`rsgt`"),
+  Parameters = c("Mean, Covariance","Mean, Scale, df","Mean, SD, lambda, p, q"),
+  Skew = c("No","No","Yes"),
+  FatTails = c("No","Yes","Yes"),
+  stringsAsFactors = FALSE
+)
+kable(dt, booktabs = TRUE, escape = TRUE,
+      col.names = c("Distribution","Key Parameters","Skew?","Fat Tails?"),
+      caption = "Return distribution options") %>%
+  kable_styling(latex_options = c("hold_position","scale_down"),
+                font_size = 9) %>%
+  column_spec(5, width = "5cm")
+```
+
+### rmvnorm - Multivariate Normal
+
+The Gaussian distribution is fully characterised by a mean vector and a covariance matrix. It is symmetric and assigns exponentially negligible probability to extreme events.
+
+### rmvt - Multivariate Student-$t$
+
+The $t$-distribution extends the Normal by adding a degrees-of-freedom parameter $\nu$. The density of a $d$-dimensional multivariate $t$ with mean $\boldsymbol{\mu}$, scale matrix $\boldsymbol{\Sigma}$, and $\nu$ degrees of freedom is:
+
+$$f(\mathbf{x}) = \frac{\Gamma\!\left(\frac{\nu+d}{2}\right)}{\Gamma\!\left(\frac{\nu}{2}\right)(\nu\pi)^{d/2}|\boldsymbol{\Sigma}|^{1/2}} \left(1 + \frac{1}{\nu}(\mathbf{x}-\boldsymbol{\mu})^\top\boldsymbol{\Sigma}^{-1}(\mathbf{x}-\boldsymbol{\mu})\right)^{-(\nu+d)/2}$$
+
+As $\nu$ decreases, the tails become heavier. The $t$-distribution is **symmetric** - it cannot capture negative skewness.
+
+### rsgt - Skewed Generalised $t$
+
+The SGT distribution (Hansen 1994; Theodossiou 1998) nests several special cases and is parameterised by:
+
+- $\lambda \in (-1, 1)$: **skewness** - negative values indicate left skew (crash-prone)
+- $p > 0$: **peakedness** of the central region
+- $q > 1/p$: **tail decay** - lower $q$ implies heavier tails
+
+The SGT can simultaneously capture asymmetry and fat tails.
+
+## Calibration Mechanism
+
+When `calibrate_params = TRUE`, the function fits shape parameters to each asset's return history using moment matching. The argument `calibration_method` controls which moments are prioritised during fitting:
+
+- **`"tail"` (default):** Fits parameters by minimising the discrepancy between the model's implied fourth central moment (excess kurtosis) and the empirical excess kurtosis of the return series. Because kurtosis is driven almost entirely by the behaviour of the distribution in its tails, this method effectively forces the shape parameters to reproduce the observed frequency and severity of extreme returns. The cost is that the fit to the centre of the distribution (mean and variance) is accepted as-is rather than jointly optimised. This may be the preferred setting for VaR and CVaR applications, where tail accuracy outweighs central-moment precision.
+
+- **`"full"`:** Fits parameters by minimising the joint discrepancy across all four moments simultaneously - mean, variance, skewness, and kurtosis - with equal weighting. The optimiser trades off some tail accuracy in exchange for a better overall distributional fit. This may be appropriate when the full shape of the distribution matters, for example when the simulation output is used for scenario generation or distribution forecasting rather than pure tail-risk measurement.
+
+
+## Reference Asset
+
+The argument `reference_asset` specifies a portfolio asset that serves as the benchmark axis in the pairwise latent-space diagnostic scatter plots. The reference asset appears on the $y$-axis, with each other asset on the $x$-axis, so departures from the diagonal can reveal non-linear or asymmetric dependence.
+
+\newpage
+
+# Weights Processing  (Step 2)
+
+## Weight Input Formats
+
+The `weights` argument accepts three formats:
+
+```{r weights-table, echo=FALSE, eval=TRUE}
+wt <- data.frame(
+  Format = c("`NULL` (default)","Named numeric vector","Data frame / matrix"),
+  Description = c(
+    "Equal weights 1/N across all assets. Appropriate for exploratory analysis.",
+    "Fixed allocation, e.g. `c(Equities = 0.6, Bonds = 0.3, Gold = 0.1)`.",
+    "Each row is a distinct allocation. Enables allocation comparison or weight sweeps."
+  ),
+  stringsAsFactors = FALSE
+)
+kable(wt, booktabs = TRUE, escape = TRUE,
+      col.names = c("Format","Description"),
+      caption = "Weight input formats") %>%
+  kable_styling(latex_options = "hold_position") %>%
+  column_spec(2, width = "9cm")
+```
+
+
+## Number of Simulation Draws
+
+The argument `n_sim_returns` controls the number of joint return draws. When `NULL` (default), the function uses the length of the historical data series.
+
+\newpage
+
+# Fitting Marginal Distributions  (Step 3)
+
+## Marginal vs. Joint Distributions
+
+A **marginal distribution** describes the behaviour of a single asset in isolation. A **joint distribution** describes the simultaneous behaviour of all assets and requires specification of the dependence structure.
+
+The function separates these two problems. Step 3 fits a marginal distribution to each asset individually. Step 5 captures the dependence structure via a copula. This is the **copula approach** and is substantially more flexible than fitting a joint distribution directly.
+
+## Without a Copula (`copula = FALSE`)
+
+When `copula = FALSE`, the function simulates from a parametric multivariate distribution in one shot. The dependence structure is implicit in the covariance matrix and the marginals are constrained to be of the same distributional family across all assets.
+
+- **`rmvnorm`:** A standard multivariate Normal draw using the Cholesky decomposition of $\boldsymbol{\Sigma}$. 
+
+- **`rmvt`:** A multivariate Student-$t$ draw. All assets share the same degrees-of-freedom parameter, so each asset's tail heaviness is identical. The dependence structure is governed by $\boldsymbol{\Sigma}$, with stronger co-movement in the tails than the Gaussian.
+
+- **`rsgt`:** Each asset is drawn from its own fitted SGT marginal, and the draws are coupled through a Gaussian copula implied by the Cholesky decomposition of $\boldsymbol{\Sigma}$. This is a middle ground: it allows each asset to have a distinct skewness and tail shape (unlike `rmvt`, which imposes a single df across all assets), but the dependence structure remains Gaussian - there is no excess tail co-dependence beyond what $\boldsymbol{\Sigma}$ implies. To obtain both heterogeneous marginals and non-Gaussian dependence, use `rsgt` with `copula = TRUE`.
+
+## With a Copula (`copula = TRUE`)
+
+A **copula** is a function that couples arbitrary marginal distributions into a joint distribution whilst preserving the chosen marginals exactly. By **Sklar's theorem** (1959), any joint continuous distribution $F$ can be written as:
+
+$$F(\mathbf{x}) = C\!\left(F_1(x_1), F_2(x_2), \ldots, F_d(x_d)\right)$$
+
+where $F_i$ are the marginal CDFs and $C: [0,1]^d \to [0,1]$ is the copula. This means we are free to choose the best marginal distribution for each asset independently, and specify the dependence structure separately.
+
+When `copula = TRUE`, Step 3 transforms each asset's fitted residuals into uniform $[0,1]$ scores using the **Probability Integral Transform (PIT)**:
+
+$$u_i = F_i(x_i)$$
+
+If the marginal model is correctly specified, these scores are $\text{Uniform}(0,1)$. They are then passed to Step 5 where a copula is fitted.
+
+## Positive Definite Matrices
+
+A covariance matrix must be **positive definite (PD)**: all eigenvalues $\lambda_k > 0$. This guarantees that any portfolio's variance $\mathbf{w}^\top \boldsymbol{\Sigma} \mathbf{w} > 0$. When the raw Kendall $\tau$ matrix is not PD (common with many assets), the function applies Higham's (2002) `nearPD()` algorithm:
+
+$$\boldsymbol{\Sigma}^* = \arg\min_{\boldsymbol{M} \in \mathcal{S}^+} \|\boldsymbol{M} - \boldsymbol{\Sigma}\|_F$$
+
+where $\mathcal{S}^+$ is the cone of symmetric PD matrices.
+
+\newpage
+
+# Forward-Looking Volatilities  (Step 4)
+
+Historical sample volatility treats every observation as equally informative about future volatility. Empirical research shows that equity volatility is **clustered** - periods of high volatility tend to follow one another. A forward-looking estimate that weights recent observations more heavily yields better one-period-ahead forecasts.
+
+The argument `cov_estimation` selects the method. The output feeds directly into the covariance matrix constructed in Step 6.
+
+## Methods Comparison
+
+```{r vol-table, echo=FALSE, eval=TRUE}
+vt <- data.frame(
+  Method = c("Historical (Sample)","EWMA","GJR-GARCH(1,1)"),
+  Arg = c('`"sample"`','`"ewma"`','`"garch"`'),
+  Strengths = c(
+    "Simple; unbiased long-run estimate",
+    "Reacts quickly to recent vol; single lambda tuning",
+    "Captures vol clustering and leverage effect"),
+  stringsAsFactors = FALSE
+)
+kable(vt, booktabs = TRUE, escape = TRUE,
+      col.names = c("Method","Argument","Description"),
+      caption = "Volatility estimation methods") %>%
+  kable_styling(latex_options = c("hold_position","scale_down"),
+                font_size = 9) %>%
+  column_spec(c(3,4,5), width = "3.5cm")
+```
+
+### Historical (Sample) Covariance
+
+The sample covariance matrix $\hat{\boldsymbol{\Sigma}} = \frac{1}{n-1}\sum_{t=1}^{n}(\mathbf{r}_t - \bar{\mathbf{r}})(\mathbf{r}_t - \bar{\mathbf{r}})^\top$ treats every observation in the history as equally informative about future volatility. This is unbiased in the statistical sense - no single time period is favoured - but it is may be unresponsive. A spike in volatility two years ago receives exactly the same weight as last week's observation.
+
+### EWMA
+
+The Exponentially Weighted Moving Average covariance weights each observation by an exponentially decaying factor $\lambda^{n-t}$, where $\lambda \in (0, 1)$ is the decay parameter (`cov_lambda`):
+
+$$\hat{\boldsymbol{\Sigma}}_t = \lambda\,\hat{\boldsymbol{\Sigma}}_{t-1} + (1-\lambda)\,\mathbf{r}_{t-1}\mathbf{r}_{t-1}^\top$$
+
+Observations decay in influence at rate $\lambda$ per period. The commonly used RiskMetrics value of $\lambda = 0.94$ (daily) or $\lambda = 0.97$ (weekly) gives a half-life of roughly 11 or 23 periods respectively, meaning the most recent period contributes $(1-\lambda)$ of the total weight while older observations contribute progressively less. Unlike GARCH, EWMA has no mean-reversion to an unconditional level - it simply tracks recent realised volatility. 
+
+### GJR-GARCH(1,1)
+
+The Glosten-Jagannathan-Runkle GARCH model (1993) adds an asymmetric **leverage effect**: negative return shocks increase future volatility more than positive shocks of equal magnitude:
+
+$$\sigma_t^2 = \omega + \alpha_1 \varepsilon_{t-1}^2 + \gamma_1 \varepsilon_{t-1}^2 \mathbf{1}[\varepsilon_{t-1} < 0] + \beta_1 \sigma_{t-1}^2$$
+
+When $\gamma_1 > 0$, a negative shock $\varepsilon_{t-1} < 0$ adds $\gamma_1 \varepsilon_{t-1}^2$ to the next period's variance, whereas a positive shock of the same magnitude does not. This captures the well-documented equity market phenomenon where drawdowns generate more volatility than equivalent rallies. The **unconditional (long-run) volatility** is retrieved via `rugarch::uncondVar()`:
+
+$$\bar{\sigma} = \sqrt{\frac{\omega}{1 - \alpha_1 - \frac{\gamma_1}{2} - \beta_1}}$$
+
+The model returns three quantities per asset: the in-sample conditional volatility path, the unconditional volatility, and the 1-step-ahead forecast - all displayed in the GARCH time-series plot.
+
+\newpage
+
+# Fitting the Copula  (Step 5)
+
+## Copula Types
+
+By Step 5, each asset's return has been expressed as a uniform $[0,1]$ PIT score. The copula models the dependence between these uniform residuals - it captures *how assets co-move after their individual distributional shapes have been accounted for*.
+
+Two copula families are available via `copula_type`:
+
+- **Gaussian copula:** Dependence described entirely through a correlation matrix $\boldsymbol{R}$. There is **no excess co-movement in the tails** - assets are asymptotically independent in the extremes.
+- **$t$-copula:** Extends the Gaussian with a degrees-of-freedom parameter $\nu_C$. Lower $\nu_C$ implies stronger **tail dependence**.
+
+## Tiered Copula Structure Selection
+
+The feasibility of fitting an **unstructured** (`"un"`) correlation matrix - where every pairwise correlation is estimated freely - depends on the observation-to-parameter ratio. For $n$ assets, the unstructured copula requires $n(n-1)/2$ free parameters:
+
+```{r copula-tier-table, echo=FALSE, eval=TRUE}
+ct <- data.frame(
+  Condition = c("obs/params >= 20","obs/params >= 10","obs/params >= 5","Below 5"),
+  Structure = c("Unstructured (`un`)","Toeplitz (`toep`)","Exchangeable (`ex`)","Kendall tau inversion"),
+  Description = c(
+    "Each pairwise correlation estimated freely",
+    "Correlations depend only on lag distance between assets",
+    "Single correlation parameter for all pairs",
+    "Direct tau-inversion; always PD; df recovered via profile MLE"
+  ),
+  stringsAsFactors = FALSE
+)
+kable(ct, booktabs = TRUE, escape = TRUE,
+      col.names = c("Condition","Structure","Description"),
+      caption = "Tiered copula structure selection",
+      ) %>%
+  kable_styling(latex_options = "hold_position") %>%
+  column_spec(3, width = "7cm")
+```
+
+This tiered strategy is grounded in two related bodies of statistical theory. First, the **curse of dimensionality in covariance estimation** (Stein 1956; Ledoit and Wolf 2004): the sample correlation matrix becomes unreliable - specifically, its smallest eigenvalues collapse toward zero - as soon as the observation-to-parameter ratio $n/p$ is not substantially greater than one. Ledoit and Wolf (2004) formalise this precisely, showing that even with $n/p \to \infty$ the sample estimator is suboptimal, and that shrinkage toward a structured target (such as the identity or an equicorrelation matrix) is always preferable in finite samples. Second, **information criteria** (Akaike 1974; Schwarz 1978) penalise model complexity as $2k$ (AIC) or $k \log n$ (BIC), where $k$ is the number of free parameters. Fitting 78 free correlations (13-asset unstructured copula) from 200 observations would score poorly on either criterion because the likelihood gain does not justify the parameter cost. The tiered structure operationalises these principles pragmatically: at each threshold, the structure with the fewest free parameters that the data can reliably support is selected.
+
+## Warm Starting from Kendall's $\tau$
+
+Before numerical optimisation begins, the function constructs a **warm start**: an initial value for every copula correlation parameter, derived analytically rather than through any iterative search. For the $t$-copula the formula is:
+
+$$\hat{\rho}_{ij}^{\text{warm}} = \sin\!\left(\frac{\pi}{2} \tau_{ij}\right)$$
+
+For the Gaussian copula (using Spearman's $\rho_S$):
+
+$$\hat{\rho}_{ij}^{\text{warm}} = 2\sin\!\left(\frac{\pi}{6} \rho_{S,ij}\right)$$
+
+**What these formulas produce:** For every asset pair $(i,j)$, Kendall's $\tau_{ij}$ is computed from the raw return data. Plugging it into the formula above yields $\hat{\rho}_{ij}^{\text{warm}} \in [-1,1]$ - a plausible copula correlation for that pair. This is the method-of-moments estimator (itau) and is in fact the *exact* answer when the fitting method is `itau`. For maximum likelihood fitting (mpl), it serves as the starting point.
+
+**How the warm start is used:** The $n(n-1)/2$ pairwise warm-start values are assembled into a correlation matrix, which is projected to the nearest positive-definite matrix if needed, and passed as the initial parameter vector to the numerical optimiser (`optim` or `fitCopula`). The optimiser then adjusts this starting matrix along the gradient of the copula log-likelihood until convergence. Because the warm start is already close to the MLE (Kendall's $\tau$ and the MLE typically agree to within a few percent), the optimiser needs far fewer function evaluations and is much less likely to terminate at a local optimum. Without a warm start - for example, initialising all correlations at zero - the optimiser must traverse a much longer, more rugged path through the parameter space, and convergence failures are substantially more common.
+
+## Fallback: Kendall $\tau$ Inversion
+
+If all tiered fitting attempts fail, the function falls back to a two-stage procedure that abandons joint optimisation of $(\boldsymbol{\rho}, \nu)$ in favour of estimating each separately.
+
+**Stage 1 - The correlation matrix.** The Kendall $\tau$-implied correlation $\hat{\rho}_{ij} = \sin(\pi\tau_{ij}/2)$ is computed for every asset pair and assembled into an $n \times n$ matrix. This is the itau (method-of-moments) estimator and is a valid, consistent estimator of the copula correlation - it is not a fallback in the statistical sense, only in the computational sense. If this assembled matrix is not positive-definite (which can happen because pairwise estimates are not guaranteed to be globally consistent), `nearPD()` projects it to the nearest PD matrix. The result is used directly as $\hat{\boldsymbol{\rho}}$ without any further optimisation.
+
+**Stage 2 - The degrees-of-freedom parameter.** With $\hat{\boldsymbol{\rho}}$ fixed, $\nu$ is the only remaining unknown. Searching over $\nu$ alone is a **one-dimensional** problem, which is why it can succeed even when the full joint optimisation over $(\boldsymbol{\rho}, \nu)$ failed. The search proceeds in two steps:
+
+- **Coarse grid search:** The profile log-likelihood $\ell(\nu \mid \hat{\boldsymbol{\rho}})$ - meaning the copula log-likelihood evaluated at the data, treating $\hat{\boldsymbol{\rho}}$ as fixed and varying only $\nu$ - is computed at the candidate values $\nu \in \{3,4,5,6,8,10,15,20,30\}$. The value that maximises the likelihood is identified. The grid is denser at small $\nu$ because the log-likelihood surface is most curved there: moving from $\nu=3$ to $\nu=4$ changes tail dependence substantially, while moving from $\nu=20$ to $\nu=30$ changes almost nothing.
+
+- **Brent refinement:** Given the best grid point as a starting bracket, Brent's method (a root-finding algorithm that combines bisection, secant, and inverse quadratic interpolation) refines the optimum on the continuous interval $[2.1, 50]$. The lower bound of $2.1$ rather than $2$ avoids the singularity at $\nu=2$ where the $t$-distribution has infinite variance. The upper bound of $50$ reflects that a $t$-copula with $\nu > 30$ is empirically indistinguishable from a Gaussian copula.
+
+The output of this two-stage procedure is a valid copula parameterised by $\hat{\boldsymbol{\rho}}$ (from itau inversion) and $\hat{\nu}$ (from profile MLE), which is then used in all downstream simulation and stress-testing steps as if it had been fitted by the standard tiered procedure.
+
+## Tail Dependence
+
+Tail dependence quantifies the probability that two assets move to extreme values **simultaneously**. For the $t$-copula with parameter $\rho_{ij}$ and $\nu$ degrees of freedom, the (symmetric) tail dependence coefficient is:
+
+$$\lambda = 2\, t_{\nu+1}\!\left(-\sqrt{\frac{(\nu+1)(1-\rho_{ij})}{1+\rho_{ij}}}\right)$$
+
+where $t_{\nu+1}$ is the CDF of the Student-$t$ with $\nu+1$ degrees of freedom.
+
+\newpage
+
+# Building the Final Covariance Matrix  (Step 6)
+
+## $\boldsymbol{\Sigma} = \mathbf{D}\,\boldsymbol{\rho}\,\mathbf{D}$ Decomposition
+
+The final covariance matrix is assembled as:
+
+$$\boldsymbol{\Sigma} = \mathbf{D}\,\boldsymbol{\rho}\,\mathbf{D}$$
+
+where $\mathbf{D} = \text{diag}(\hat{\sigma}_1, \ldots, \hat{\sigma}_n)$ contains the **forward-looking standard deviations** from Step 4. The source of $\boldsymbol{\rho}$ depends on the chosen path:
+
+- **`copula = TRUE`:** $\boldsymbol{\rho}$ is the fitted copula correlation matrix from Step 5. It is estimated from historical PIT residuals and reflects the long-run dependence structure after the individual distributional shapes have been accounted for.
+- **`copula = FALSE`:** $\boldsymbol{\rho}$ is the Pearson correlation matrix derived from the historical sample covariance - specifically $\boldsymbol{\rho} = \mathbf{D}_h^{-1}\hat{\boldsymbol{\Sigma}}_{\text{hist}}\mathbf{D}_h^{-1}$, where $\mathbf{D}_h$ contains the historical (not forward-looking) standard deviations. The forward-looking diagonal $\mathbf{D}$ then replaces the historical volatilities whilst preserving the historical correlation structure.
+
+In both cases, the separation is deliberate: the diagonal $\mathbf{D}$ supplies forward-looking volatility estimates that are deemed to be suitable and responsive to the current regime, while the off-diagonal structure in $\boldsymbol{\rho}$ reflects the longer-run dependence pattern.
+
+## Scale Matrix for the $t$-Copula Path
+
+When simulating from a $t$-copula, the copula correlation matrix must be converted to a **scale matrix**. For $\nu > 2$ degrees of freedom, the covariance equals $\nu/(\nu-2)$ times the scale matrix. The function applies the inverse correction so that the simulated returns have the covariance $\boldsymbol{\Sigma}$ constructed above:
+
+$$\boldsymbol{\Sigma}_{\text{scale}} = \frac{\nu - 2}{\nu}\,\boldsymbol{\Sigma}$$
+
+## Interpreting Diagnostics
+
+**Condition number.** The condition number $\kappa(\boldsymbol{\Sigma}) = \lambda_{\max}/\lambda_{\min}$ measures how sensitive the matrix inverse is to small perturbations in the data. Intuitively, a high condition number means that two or more assets move together so reliably that the matrix is effectively trying to distinguish directions that look nearly identical to it - small numerical errors get amplified into large errors in the inverse, which then propagates into portfolio variance calculations and copula fitting. The thresholds $\kappa < 100$ (well-conditioned) and $\kappa > 1{,}000$ (near-multicollinearity) are conventional rules of thumb drawn from numerical linear algebra (Golub and Van Loan 2013) rather than formal statistical tests. They indicate the order of magnitude of numerical reliability rather than a hard boundary.
+
+**Eigenvalues.** The eigenvalues $\lambda_1 \geq \lambda_2 \geq \cdots \geq \lambda_n$ of a covariance matrix have two roles. First, all must be strictly positive for the matrix to be positive-definite (a requirement for valid portfolio variance and for the Cholesky decomposition used in simulation). Second, their *magnitudes* matter: large eigenvalues correspond to directions of high variance in the data (principal components with large explained variance), while small eigenvalues correspond to near-flat directions. A minimum eigenvalue that is positive but very small ($10^{-6}$)after `nearPD()` correction - indicates that the matrix is barely positive-definite and that the corresponding portfolio direction has negligible variance in the data. This is not an error per se, but it signals that the correlation matrix may be capturing noise rather than genuine structure in that direction, and that results involving that eigendirection (such as the fitted copula for those asset pairs) should be interpreted with caution.
+
+\newpage
+
+# Latent Variable Diagnostics  (Step 6.5)
+
+## Latent vs. Observed Space
+
+The **latent space** refers to the uniform $[0,1]$ PIT residuals. If the marginal models are correctly specified, these should be uniformly distributed, and their joint distribution should match the fitted copula.
+
+The pairwise scatter plots display each asset pair in *both* spaces - the observed return space and the latent uniform space - on the same panel. Departures from the expected pattern are informative:
+
+- **Banana-shaped curves** in the observed space: Non-linear relationship that the copula may not fully capture.
+- **Corner clustering** in the uniform space: Tail dependence - assets that tend to move to extremes simultaneously.
+- **Asymmetric corner density**: Lower-left clustering (joint crashes) without upper-right clustering (joint rallies) signals asymmetric tail dependence.
+
+## KS Uniformity Test
+
+The Kolmogorov-Smirnov (KS) test for each asset tests $H_0: u_i \sim \text{Uniform}(0,1)$:
+
+$$D_n = \sup_{u \in [0,1]} |F_n(u) - u|$$
+
+A $p$-value below 0.05 indicates that the fitted marginal distribution is misspecified for that asset. Results are stored in `result$ks_test`. Common causes of rejection: heavy tails that the model cannot accommodate, bimodal distributions, or severe outliers.
+
+<!-- **If some assets pass and some fail, is the model unusable?** Not necessarily. A partial failure is informative rather than fatal. The copula approach is specifically designed to be robust to individual marginal misspecification because it separates the marginal fits (one per asset, Step 3) from the dependence structure (Step 5). A failed KS test for asset $i$ means that the chosen distribution (Normal, $t$, or SGT) does not perfectly describe that asset's individual return behaviour, but the copula correlation and all other assets' distributions remain valid. In practice, the impact on portfolio-level risk metrics depends on how sensitive the portfolio is to that specific asset: a small-weight holding with a rejected KS test may contribute negligibly to overall VaR, while a large-weight holding with a rejected test should prompt re-examination of the distributional assumption (for example, switching from `rmvnorm` to `rmvt` or `rsgt`, or switching `calibration_method` from `"full"` to `"tail"`). The model should be treated as unusable only if the majority of assets are rejected, which typically signals a fundamental mismatch between the chosen distribution family and the data. -->
+
+\newpage
+
+# Stress Testing  (Step 7)
+
+## Overview of Shock Types
+
+The stress-testing framework distinguishes two **sources** (endogenous = portfolio assets; exogenous = non-portfolio instruments) and two **types** (return shock; volatility shock), controlled via four arguments:
+
+```{r shock-args-table, echo=FALSE, eval=TRUE}
+sa <- data.frame(
+  Argument = c("`asset_shock`","`volatility_shock`","`exogenous_shock`","`exogenous_volatility_shock`"),
+  Target = c("Portfolio assets","Portfolio assets","Exogenous instruments","Exogenous instruments"),
+  Type = c("Return (decimal)","Vol multiplier k","Return (decimal)","Vol multiplier k"),
+  Default = c("0 per asset","1 per asset (no change)","0 per instrument","1 per instrument"),
+  stringsAsFactors = FALSE
+)
+kable(sa, booktabs = TRUE, escape = TRUE,
+      col.names = c("Argument","Target","Shock Type","Unspecified Default"),
+      caption = "Stress testing arguments") %>%
+  kable_styling(latex_options = "hold_position") %>%
+  column_spec(1, width = "4.5cm") %>%
+  column_spec(4, width = "3.5cm")
+```
+
+
+## Schur Complement Mean Propagation Formula
+
+When `propagation = TRUE`, a return shock to any asset or exogenous instrument is propagated to all other portfolio assets via the **Schur complement conditional mean formula**:
+
+$$\boldsymbol{\mu}_{n|s} = \boldsymbol{\mu}_n + \boldsymbol{\Sigma}_{ns}\,\boldsymbol{\Sigma}_{ss}^{-1}\,\boldsymbol{\delta}_s$$
+
+where:
+
+- subscript $s$ = the **shocked block** (endogenous return-shocked assets $\cup$ exogenous return-shocked instruments)
+- subscript $n$ = non-shocked portfolio assets
+- $\boldsymbol{\delta}_s$ = vector of return shocks applied to block $s$
+- $\boldsymbol{\Sigma}_{ns}$ = cross-covariance between non-shocked and shocked assets
+
+This is the conditional expectation of the non-shocked assets given the shocked assets - a standard result from multivariate normal theory. The formula is valid because $\boldsymbol{\Sigma}_{ss}$ is positive definite, guaranteeing invertibility.
+
+## Volatility Shock Mechanics
+
+### Endogenous Volatility Shock
+
+An endogenous volatility shock applies a scalar multiplier $k_i$ to asset $i$'s row and column of the covariance matrix. Applied simultaneously across all shocked assets:
+
+$$\boldsymbol{\Sigma}_{\text{stressed}} = \boldsymbol{\Sigma} \odot (\mathbf{k}\,\mathbf{k}^\top)$$
+
+where $\mathbf{k}$ is the vector of multipliers ($k_i = 1$ for unshocked assets) and $\odot$ denotes the Hadamard (element-wise) product. This means that volatilities are scaled multiplicatively: asset $i$'s own variance is multiplied by $k_i^2$, and the covariance between assets $i$ and $j$ is multiplied by $k_i \times k_j$. The pairwise correlations between assets are therefore preserved exactly - applying a volatility shock to asset $i$ does not change how correlated it is with asset $j$; it only changes how large the absolute co-movement is. Intuitively, doubling asset $i$'s volatility ($k_i = 2$) makes its returns twice as large in magnitude but leaves its directional relationship with every other asset unchanged. The portfolio-level effect is that any position exposed to asset $i$ sees its variance increase by a factor of $k_i^2 = 4$, and its covariance with positions exposed to asset $j$ increases by $k_i k_j = 2$ (assuming $k_j = 1$).
+
+### Exogenous Volatility Shock
+
+An exogenous volatility shock to instrument $e$ transmits additional variance to the portfolio via the **Law of Total Variance (LTV)**:
+
+$$\boldsymbol{\Sigma}_{pp}^{\text{stressed}} = \boldsymbol{\Sigma}_{pp} + \sum_e (k_e^2 - 1)\,\frac{\boldsymbol{\sigma}_{pe}\,\boldsymbol{\sigma}_{pe}^\top}{\sigma_{ee}}$$
+
+where $\boldsymbol{\sigma}_{pe} = \boldsymbol{\Sigma}_{pe}[\cdot, e]$ is the column of cross-covariances with exogenous asset $e$, and $\sigma_{ee} = \boldsymbol{\Sigma}_{ee}[e,e]$ is its variance. Key properties:
+
+- $k_e = 1 \Rightarrow$ addon $= 0$: Covariance unchanged
+- $k_e > 1 \Rightarrow$ addon $> 0$: Covariance widens
+- Return shock $\boldsymbol{\delta}_e$: has **no effect** on covariance
+
+A $-10\%$ return shock to an exogenous instrument (e.g. SPY) causes a large leftward shift in the portfolio mean distribution through the Schur propagation, but has **zero effect** on portfolio volatility. Volatility only changes when the exogenous vol multiplier $k_e \neq 1$.
+
+## Propagation vs. No Propagation
+
+When `propagation = FALSE`, the Schur complement step is skipped and shocked assets are modified in isolation - no conditional mean update flows to other portfolio assets. This is a **standalone** stress: how much does this asset alone contribute to the stressed portfolio return, ignoring correlations with other assets?
+
+Comparing the stressed portfolio distribution with propagation *on* versus *off* quantifies the **propagation effect** - the incremental risk attributable to inter-asset correlations, above and beyond the direct effect of the shock.
+
+## Stress Scenario Matrix
+
+The table below covers all outcomes arising from the four binary shock dimensions (endo return, endo vol, exog return, exog vol). Scenarios with identical mean and covariance mechanics are grouped. 
+
+<!-- Counts within each dimension (single vs. multiple assets/instruments) affect the **magnitude** of the effect but not its type. -->
+
+```{r stress-table, echo=FALSE, eval=TRUE}
+st <- data.frame(
+  Scenario = c("0: Baseline",
+               "A1","A2","A3",
+               "B1","B2","B3",
+               "C1","C2","C3","C4","C5","C6","C7","C8","C9"),
+  EndoRet = c("0",">=1","0",">=1","0","0","0",">=1",">=1","0","0",">=1",">=1",">=1","0",">=1"),
+  EndoVol = c("0","0",">=1",">=1","0","0","0","0","0",">=1",">=1",">=1",">=1","0",">=1",">=1"),
+  ExogRet = c("0","0","0","0",">=1","0",">=1",">=1","0",">=1","0",">=1","0",">=1",">=1",">=1"),
+  ExogVol = c("0","0","0","0","0",">=1",">=1","0",">=1","0",">=1","0",">=1",">=1",">=1",">=1"),
+  MeanEffect = c(
+    "Unchanged",
+    "Shocked: mu_i + delta_i; others: Schur propagation",
+    "Unchanged",
+    "Schur from endo return-shocked block",
+    "All portfolio: mu_p + Sigma_pe Sigma_ee^{-1} delta_e",
+    "Unchanged",
+    "All portfolio: Schur from exog return block",
+    "Shocked endo + all: compound Schur (endo + exog block)",
+    "Endo Schur propagation only",
+    "All portfolio: Schur from exog return block",
+    "Unchanged",
+    "Compound Schur: endo + exog return blocks",
+    "Endo Schur propagation only",
+    "Compound Schur: endo + exog return blocks",
+    "Exog Schur propagation only",
+    "Full compound Schur: endo + exog return blocks"
+  ),
+  CovEffect = c(
+    "Unchanged",
+    "Unchanged",
+    "Sigma odot outer(k,k)",
+    "Sigma odot outer(k,k)",
+    "Unchanged",
+    "LTV addon: Sigma_e [(k_e^2-1) sigma_pe sigma_pe' / sigma_ee]",
+    "LTV addon (independent of return shock)",
+    "Unchanged",
+    "LTV addon [exog vol]",
+    "Sigma odot outer(k,k) [endo vol]",
+    "Sigma odot outer(k,k) + LTV addon - additive",
+    "Sigma odot outer(k,k) [endo vol]",
+    "Sigma odot outer(k,k) + LTV addon - additive",
+    "LTV addon [exog vol only]",
+    "Sigma odot outer(k,k) + LTV addon - additive",
+    "Sigma odot outer(k,k) + LTV addon - additive"
+  ),
+  stringsAsFactors = FALSE
+)
+
+kable(st, booktabs = TRUE, longtable = FALSE, escape = TRUE,
+      col.names = c("Scenario","Endo R","Endo V",
+                    "Exog R","Exog V","Effect on Mean","Effect on Covariance"),
+      caption = "Complete stress scenario matrix: 16 distinct behavioural patterns. Counts of shocked assets affect magnitude only, not type.") %>%
+  kable_styling(latex_options = c("hold_position","scale_down"),
+                font_size = 8) %>%
+  column_spec(1, width = "1.0cm", bold = TRUE) %>%
+  column_spec(2:5, width = "0.8cm") %>%
+  column_spec(6, width = "4.5cm") %>%
+  column_spec(7, width = "4.5cm") %>%
+  row_spec(0, bold = TRUE)
+```
+
+
+\newpage
+
+# Simulating Returns  (Step 8)
+
+## Simulation Inputs
+
+The simulation step draws `n_sim_returns` joint return vectors from the fitted distribution. Key inputs from prior steps:
+
+- **Marginal parameters** (Step 3): distribution family and shape parameters for each asset
+- **Covariance matrix** $\boldsymbol{\Sigma}$ (Step 6): forward-looking variance and copula-implied correlation
+- **Stressed mean and covariance** (Step 7, if applicable): replaces the base inputs when a stress scenario is active
+- **Weight matrix** (Step 2): aggregates simulated asset returns into portfolio-level returns
+
+For the copula path (`copula = TRUE`), simulation proceeds in two stages:
+
+1. Draw $\mathbf{u} \sim C(\boldsymbol{\rho})$ from the fitted copula (uniform scores)
+2. Apply the inverse CDF: $x_i = F_i^{-1}(u_i)$ using each asset's fitted marginal
+
+## Sanity Check: `sim_vol / target_vol`
+
+After simulation, the function computes the ratio of the realised simulation volatility to the target volatility $\sqrt{\boldsymbol{\Sigma}_{ii}}$. A ratio close to 1.0 confirms the simulation is consistent with the fitted covariance.
+
+For strongly skewed distributions (e.g. SGT with large $|\lambda|$), this ratio can deviate from 1.0 because skewness affects the sample standard deviation even when the theoretical variance is correct. A ratio in the range $[0.95, 1.05]$ is considered acceptable.
+
+## Simulation Results Summary
+
+The simulation output includes the following statistics, accessible via `result$portfolio_stats`:
+
+```{r stats-table, echo=FALSE, eval=TRUE}
+stt <- data.frame(
+  Metric = c("Mean Return","Volatility","VaR 90/95/99%","CVaR 95% (Expected Shortfall)",
+             "Skewness","Excess Kurtosis","Sharpe Ratio (Annual)"),
+  Description = c(
+    "Expected portfolio return over the period",
+    "Standard deviation of portfolio returns",
+    "5th/1st percentile of the simulated return distribution",
+    "Expected loss conditional on return below VaR threshold",
+    "Third standardised central moment of portfolio returns",
+    "Fourth standardised central moment minus 3",
+    "Annualised (mean / vol) x sqrt(periods per year)"
+  ),
+  stringsAsFactors = FALSE
+)
+kable(stt, booktabs = TRUE,
+      col.names = c("Statistic","Description"),
+      caption = "Portfolio risk statistics computed from simulation") %>%
+  kable_styling(latex_options = "hold_position") %>%
+  column_spec(2, width = "9cm")
+```
+
+\newpage
+
+# Statistics and Diagnostic Plots  (Steps 9–10)
+
+## Accessing Results
+
+The function returns a named list with three top-level components:
+
+- `result$portfolio_stats`: Data frame of portfolio risk statistics (pre- and post-stress)
+- `result$plots$portfolio_diagnostics`: List of ggplot/patchwork objects for model diagnostics
+- `result$stressed_plots`: Stress-scenario visualisations (populated only when shocks are specified)
+
+Additional result fields are summarised in the table below:
+
+```{r result-fields, echo=FALSE, eval=TRUE}
+rf <- data.frame(
+  Field = c(
+    "result$asset_empirical_summary",
+    "result$asset_draws",
+    "result$asset_draws_stress",
+    "result$exogenous_asset_empirical_summary",
+    "result$exogenous_historical_correlation",
+    "result$ks_test",
+    "result$stress_impact_summary",
+    "result$portfolio_stats",
+    "result$calibrated_params",
+    "result$final_covariance",
+    "result$copula_correlation",
+    "result$tail_dependence"
+  ),
+  Contents = c(
+    "Per-asset empirical mean, SD, skewness, kurtosis, min, max",
+    "n_sim x n_assets data frame of pre-stress per-asset draws",
+    "n_sim x n_assets data frame of post-stress draws; NULL if unstressed",
+    "Empirical summary for exogenous instruments; NULL if none",
+    "Portfolio x exogenous Pearson correlation data frame; NULL if no exog",
+    "KS test: Asset, KS_stat, p_value, Flag; NULL if copula = FALSE",
+    "7-row data frame: Metric / Pre_Stress / Post_Stress / Change; NULL if unstressed",
+    "14-row data frame: all portfolio risk statistics pre and post stress",
+    "Calibrated distribution shape parameters per asset; NULL if not calibrated",
+    "Final n x n forward-looking covariance matrix (Sigma)",
+    "Fitted copula correlation matrix (rho); NULL if copula = FALSE",
+    "Tail dependence matrix (lambda); NULL if Gaussian copula or copula = FALSE"
+  ),
+  stringsAsFactors = FALSE
+)
+kable(rf, booktabs = TRUE, escape = TRUE,
+      col.names = c("Field","Contents"),
+      caption = "Key result object fields") %>%
+  kable_styling(latex_options = c("hold_position","scale_down"),
+                font_size = 9) %>%
+  column_spec(1, width = "5cm") %>%
+  column_spec(2, width = "8cm")
+```
+
+## Diagnostic Plot Inventory
+
+```{r plot-table, echo=FALSE, eval=TRUE}
+pt <- data.frame(
+  Plot = c("`asset_distributions`","`portfolio_distribution`","`qq_plot`",
+           "`historical_correlation`","`copula_correlation`","`covariance_matrix`",
+           "`time_series` (GARCH only)","`pairwise_diagnostics`","`tail_dependency`"),
+  Description = c(
+    "Histogram of each asset's return with fitted marginal overlay. Spot bimodal distributions, outliers, or poor marginal fits.",
+    "Histogram of the simulated portfolio return. Shows the full shape, not just point estimates.",
+    "QQ plot vs. Normal reference. Points above the diagonal in the left tail indicate heavier left-tail risk.",
+    "Pearson correlation heatmap. Identifies clusters of highly correlated assets and natural diversifiers.",
+    "Copula correlation matrix alongside its difference from historical Pearson. Divergences indicate non-linear dependence.",
+    "Heatmap of the final forward-looking covariance (Sigma), labelled with sigma on diagonal and rho off-diagonal.",
+    "Multi-panel canvas (4 x ceil(n/4)) of conditional vol, raw returns, unconditional vol, and 1-step forecast per asset.",
+    "Pairwise scatter in observed and latent spaces for each asset vs. the reference asset. Reveals non-linear dependence.",
+    "Tail dependence bar chart per asset pair + copula rho vs. Kendall tau-inversion rho scatter, coloured by |Delta rho|."
+  ),
+  stringsAsFactors = FALSE
+)
+kable(pt, booktabs = TRUE, escape = TRUE,
+      col.names = c("Plot Name","Description and Insights"),
+      caption = "Portfolio diagnostic plot inventory") %>%
+  kable_styling(latex_options = c("hold_position","scale_down"),
+                font_size = 9) %>%
+  column_spec(1, width = "4cm") %>%
+  column_spec(2, width = "9cm")
+```
+
+## Stress-Scenario Plots
+
+When stress scenarios are active, the following additional plots are produced:
+
+- **`portfolio_distribution_comparison`:** Overlaid pre-stress and post-stress portfolio return distributions, with VaR and CVaR markers. The central visualisation for communicating stress impact to stakeholders.
+- **`exogenous_propagation` (Scenario B):** Transmission of the exog shock from instruments to each portfolio asset, scaled by the implied beta $\beta_{pe}$.
+- **`propagation_effects` (Scenario A):** Conditional mean shift per asset, broken down into direct (shocked asset) and propagated (correlated assets) components.
+- **`mixed_shock_effects` (Scenario C):** Compound effect decomposition: direct endo + propagated endo + propagated exog.
+
+\newpage
+
+# Quick-Reference Call Examples
+
+## Minimal Call
+
+```r
+result <- portfolio_risk_simulation(
+  historical_returns = my_returns
+)
+```
+
+## Full SGT + GARCH + $t$-Copula
+
+```r
+result <- portfolio_risk_simulation(
+  historical_returns  = my_returns,
+  sim_returns_dist    = "rsgt",
+  cov_estimation      = "garch",
+  calibrate_params    = TRUE,
+  calibration_method  = "tail",
+  copula              = TRUE,
+  copula_type         = "t",
+  n_sim_returns       = 10000,
+  seed                = 42
+)
+```
+
+## Endogenous Stress Scenario
+
+```r
+result <- portfolio_risk_simulation(
+  historical_returns = my_returns,
+  sim_returns_dist   = "rsgt",
+  cov_estimation     = "garch",
+  copula             = TRUE,
+  asset_shock        = list(Energy = -0.15, Finance = -0.10),
+  volatility_shock   = list(Energy = 1.5),
+  propagation        = TRUE
+)
+```
+
+## Exogenous Shock via SPY
+
+```r
+result <- portfolio_risk_simulation(
+  historical_returns          = my_returns,
+  exogenous_returns           = exog_df,
+  exogenous_shock             = list(SPY = -0.10),
+  exogenous_volatility_shock  = list(SPY = 2.0),
+  propagation                 = TRUE
+)
+```
+
+\newpage
+
+# References
+
+- Glosten, L. R., Jagannathan, R., & Runkle, D. E. (1993). On the relation between the expected value and the volatility of the nominal excess return on stocks. *Journal of Finance*, 48(5), 1779–1801.
+- Hansen, B. E. (1994). Autoregressive conditional density estimation. *International Economic Review*, 35(3), 705–730.
+- Higham, N. J. (2002). Computing the nearest correlation matrix - a problem from finance. *IMA Journal of Numerical Analysis*, 22(3), 329–343.
+- J.P. Morgan / Reuters (1996). *RiskMetrics Technical Document* (4th ed.).
+- Nelsen, R. B. (2006). *An Introduction to Copulas* (2nd ed.). Springer.
+- Sklar, A. (1959). Fonctions de répartition à $n$ dimensions et leurs marges. *Publications de l'Institut Statistique de l'Université de Paris*, 8, 229–231.
+- Theodossiou, P. (1998). Financial data and the skewed generalized $t$ distribution. *Management Science*, 44(12), 1650–1661.

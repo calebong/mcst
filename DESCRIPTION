@@ -1,13 +1,40 @@
 Package: mcst
-Title: What the Package Does (One Line, Title Case)
-Version: 0.0.0.9000
+Title: Monte carlo portfolio risk with stress testing simulations
+Version: 0.1.0
 Authors@R: 
-    person("First", "Last", , "first.last@example.com", role = c("aut", "cre"))
-Description: What the package does (one paragraph).
-License: `use_mit_license()`, `use_gpl3_license()` or friends to pick a
-    license
+    person("Caleb", "Ong",
+           email = "calebongjunyi@gmail.com",
+           role = c("aut", "cre"))
+Description: Provides portfolio_risk_simulation(), an end-to-end function
+    for multi-asset portfolio risk modelling. Supports multivariate Normal,
+    Student-t, and Skewed Generalised-t marginals; Gaussian and t-copulas;
+    historical, EWMA, and GJR-GARCH forward covariance estimation; and a
+    structured stress-testing framework with endogenous and exogenous shock
+    propagation.
+License: MIT + file LICENSE
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
 RoxygenNote: 7.3.3
+Suggests:
+    knitr,
+    rmarkdown,
+    testthat (>= 3.0.0),
+    pkgdown
+VignetteBuilder: knitr
+Imports:
+    dplyr,
+    ggplot2,
+    patchwork,
+    Matrix,
+    MASS,
+    copula,
+    rugarch,
+    sgt,
+    mvtnorm,
+    moments,
+    tidyr,
+    tibble,
+    rlang
+Config/testthat/edition: 3
 URL: https://github.com/calebong/mcst
 BugReports: https://github.com/calebong/mcst/issues

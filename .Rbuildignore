@@ -1,2 +1,1 @@
-^mcst\.Rproj$
-^\.Rproj\.user$
+^inst/doc/.*\.pdf$
