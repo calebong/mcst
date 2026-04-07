@@ -1,1 +1,7 @@
 ^inst/doc/.*\.pdf$
+^.*\.Rproj$
+^\.Rproj\.user$
+^data-raw$
+^\.github$
+^pkgdown$
+^README\.Rmd$
