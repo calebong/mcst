@@ -16,7 +16,8 @@ dependence structures, and forward-looking covariance estimation. \##
 Installation
 
 You can install the development version of mcst from
-[GitHub](https://github.com/) with:
+[GitHub](https://github.com/) with
+`remotes::install_github("calebong/mcst", dependencies = TRUE)`.
 
 More information on the package can be found via the function mechanics
 [Introduction to the mcst
@@ -34,7 +35,7 @@ devtools::install_github("calebong/mcst")
 
 The illustration uses a sample portfolio of 3 equal-weighted stocks
 (endogenous factors) and 2 market-wide, exogenous factors - SPY and
-Crude Oil - as shocks. Weekly returns are used.
+Crude Oil - as shocks. Weekly returns from 2016 to ~2026 are used.
 
 ``` r
 head(returns_data)

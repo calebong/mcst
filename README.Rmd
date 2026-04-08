@@ -21,7 +21,7 @@ knitr::opts_chunk$set(
 **mcst** (Monte Carlo & Stress Testing) is an R package that provides end-to-end, easily specifiable workflows for portfolio return simulation, risk assessment, and stress testing. It enables users to model shocks from both endogenous (portfolio-driven) and exogenous (market-driven) sources. The package offers a flexible framework for asset return modeling using multiple distribution families, copula-based dependence structures, and forward-looking covariance estimation.
 ## Installation
 
-You can install the development version of mcst from [GitHub](https://github.com/) with:
+You can install the development version of mcst from [GitHub](https://github.com/) with `remotes::install_github("calebong/mcst", dependencies = TRUE)`.
 
 More information on the package can be found via the function mechanics [Introduction to the mcst package](https://github.com/calebong/mcst/blob/main/inst/doc/portfolio_risk_simulation_vignette.pdf) and usage illustration [Sample Scenario Illustrations](https://github.com/calebong/mcst/blob/main/inst/doc/portfolio_risk_simulation_scenarios.pdf) documentations.
 
@@ -43,7 +43,7 @@ returns_data=returns_data %>% select(week, NVDA, JPM, XOM)
 
 ## Example
 
-The illustration uses a sample portfolio of 3 equal-weighted stocks (endogenous factors) and 2 market-wide, exogenous factors - SPY and Crude Oil - as shocks. Weekly returns are used.
+The illustration uses a sample portfolio of 3 equal-weighted stocks (endogenous factors) and 2 market-wide, exogenous factors - SPY and Crude Oil - as shocks. Weekly returns from 2016 to ~2026 are used.
 
 ```{r pressure, echo = TRUE}
 head(returns_data)
