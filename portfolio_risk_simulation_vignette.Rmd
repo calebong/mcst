@@ -778,7 +778,7 @@ The Glosten-Jagannathan-Runkle GARCH model (1993) adds an asymmetric **leverage 
 
 $$\sigma_t^2 = \omega + \alpha_1 \varepsilon_{t-1}^2 + \gamma_1 \varepsilon_{t-1}^2 \mathbf{1}[\varepsilon_{t-1} < 0] + \beta_1 \sigma_{t-1}^2$$
 
-When $\gamma_1 > 0$, a negative shock $\varepsilon_{t-1} < 0$ adds $\gamma_1 \varepsilon_{t-1}^2$ to the next period's variance, whereas a positive shock of the same magnitude does not. This captures the well-documented equity market phenomenon where drawdowns generate more volatility than equivalent rallies. The **unconditional (long-run) volatility** is retrieved via `rugarch::uncondVar()`:
+When $\gamma_1 > 0$, a negative shock $\varepsilon_{t-1} < 0$ adds $\gamma_1 \varepsilon_{t-1}^2$ to the next period's variance, whereas a positive shock of the same magnitude does not. This captures the well-documented equity market phenomenon where drawdowns generate more volatility than equivalent rallies. The **unconditional (long-run) volatility** is retrieved via `rugarch::uncvariance()`:
 
 $$\bar{\sigma} = \sqrt{\frac{\omega}{1 - \alpha_1 - \frac{\gamma_1}{2} - \beta_1}}$$
 
