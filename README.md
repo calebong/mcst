@@ -54,14 +54,30 @@ factors) and 2 market-wide (exogenous) factors - SPY and Crude Oil.
 
 Basic simulation with equal portfolio weights
 
-<img src="man/figures/README-s1 portfolio distribution-1.png" width="100%" />
+    #> Warning in var.mpl(copula, u): the covariance matrix of the parameter estimates
+    #> is computed as if 'df.fixed = TRUE' with df = 8
+    #> Warning in data.frame(Date = plot_dates, Return = returns_numeric[, i] * : row
+    #> names were found from a short variable and have been discarded
+    #> Warning in data.frame(Date = plot_dates, Return = returns_numeric[, i] * : row
+    #> names were found from a short variable and have been discarded
+    #> Warning in data.frame(Date = plot_dates, Return = returns_numeric[, i] * : row
+    #> names were found from a short variable and have been discarded
+
+## Solution 3: Use a Separate Chunk to Save and Display
+
+<figure>
+<img
+src="/Users/Caleb/Documents/Working%20Directory/mcst/man/figures/result_stag_portfolio_distribution_comparison.png"
+alt="“”" />
+<figcaption aria-hidden="true">“”</figcaption>
+</figure>
+
+<figure>
+<img
+src="/Users/Caleb/Documents/Working%20Directory/mcst/man/figures/result_stag_exogenous_propagation.png"
+alt="“”" />
+<figcaption aria-hidden="true">“”</figcaption>
+</figure>
 
 You’ll still need to render `README.Rmd` regularly, to keep `README.md`
 up-to-date. `devtools::build_readme()` is handy for this.
-
-You can also embed plots, for example:
-
-<img src="man/figures/README-pressure plot-1.png" width="100%" />
-
-In that case, don’t forget to commit and push the resulting figure
-files, so they display on GitHub and CRAN.

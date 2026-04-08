@@ -33,9 +33,7 @@ You can install the development version of mcst from [GitHub](https://github.com
 devtools::install_github("calebong/mcst")
 ```
 
-## Example
 
-This is a basic example which shows you how to solve a common problem:
 
 ```{r load data, include=FALSE}
 library(tidyverse)
@@ -46,36 +44,62 @@ load( "/Users/Caleb/Documents/Working Directory/mcst/data/exo_data.RData")
 returns_data=returns_data %>% select(week, NVDA, JPM, XOM)
 ```
 
-## Quick Start:
+## Example
 
-A sample portfolio of 3 equal-weighted stocks as stocks (endogenous factors) and 2 market-wide (exogenous) factors - SPY and Crude Oil.
+The illustration uses a sample portfolio of 3 equal-weighted stocks (endogenous factors) and 2 market-wide, exogenous factors - SPY and Crude Oil - as shocks. 
 
-```{r pressure, echo = FALSE}
+```{r pressure, echo = TRUE}
 head(returns_data)
 head(exo_data)
+
+tail(returns_data)
+tail(exo_data)
 ```
 
-Basic simulation with equal portfolio weights
+Illustration of a stagflationary-like stress scenario: energy costs surge while equity markets sell off simultaneously.
 
-```{r s1, echo = FALSE, results = 'hide'}
+```{r s1, echo = TRUE, results = 'hide', message = FALSE, warning = FALSE}
 library(mcst)
 
+exogenous_shock            <- list(SPY = -0.05, Crude = 0.20) # stagflationary-like shock; -5% to SPY, +20% to crude oil
+exogenous_volatility_shock <- list(SPY = 1.1,     Crude = 1.5) # SPY and Crude volatility increases by a factor of 1.1x and 1.5x respectively 
+
 # Basic simulation with equal weights
-result_1 <- portfolio_risk_simulation(
-  historical_returns = returns_data
+result_stag <- portfolio_risk_simulation(
+  historical_returns          = returns_data,
+  sim_returns_dist            = "rmvt",
+  cov_estimation              = "garch",
+  calibrate_params            = TRUE,
+  calibration_method          = "full",
+  copula                      = TRUE,
+  copula_type                 = "t",
+  copula_df                   = 4,
+  n_sim_returns               = NULL,
+  propagation                 = TRUE,
+  exogenous_returns           = exo_data,
+  exogenous_shock             = exogenous_shock,
+  exogenous_volatility_shock  = exogenous_volatility_shock,
+  df                          = 4,
+  seed                        = 123
 )
 ```
 
-```{r s1 portfolio distribution, echo = FALSE}
-print(result_1$plots$portfolio_diagnostics$portfolio_distribution)
+
+```{r show stagflation, echo = FALSE, results = 'hide'}
+# Save plot to file
+result_stag_portfolio_distribution_comparison <- result_stag$stressed_plots$portfolio_distribution_comparison
+result_stag_exogenous_propagation <- result_stag$stressed_plots$exogenous_propagation
 ```
+
+```{r save stagflation, include=FALSE}
+# Save plot to file
+ggsave("man/figures/result_stag_portfolio_distribution_comparison.png", result_stag_portfolio_distribution_comparison, width = 10, height = 7, dpi = 150)
+ggsave("man/figures/result_stag_exogenous_propagation.png", result_stag_exogenous_propagation, width = 10, height = 7, dpi = 150)
+
+```
+
+![""](/Users/Caleb/Documents/Working Directory/mcst/man/figures/result_stag_portfolio_distribution_comparison.png)
+
+![""](/Users/Caleb/Documents/Working Directory/mcst/man/figures/result_stag_exogenous_propagation.png)
 
 You'll still need to render `README.Rmd` regularly, to keep `README.md` up-to-date. `devtools::build_readme()` is handy for this.
-
-You can also embed plots, for example:
-
-```{r pressure plot, echo = FALSE}
-plot(pressure)
-```
-
-In that case, don't forget to commit and push the resulting figure files, so they display on GitHub and CRAN.
