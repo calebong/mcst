@@ -452,8 +452,8 @@ calculate_ewma_covariance <- function(returns, lambda = 0.94) {
 #'   after_stat position_dodge
 #' @importFrom patchwork wrap_plots plot_annotation
 #' @importFrom Matrix nearPD
-#' @importFrom MASS ginv
-#' @importFrom copula normalCopula tCopula fitCopula dCopula pobs
+#' @importFrom MASS ginv mvrnorm
+#' @importFrom copula normalCopula tCopula fitCopula dCopula pobs getTheta
 #' @importFrom rugarch ugarchspec ugarchfit ugarchforecast sigma uncvariance
 #' @importFrom mvtnorm rmvnorm rmvt
 #' @importFrom moments skewness kurtosis
