@@ -57,7 +57,7 @@ head(exo_data)
 
 Basic simulation with equal portfolio weights
 
-```{r s1, echo = FALSE}
+```{r s1, echo = FALSE, results = 'hide'}
 library(mcst)
 
 # Basic simulation with equal weights
@@ -67,7 +67,7 @@ result_1 <- portfolio_risk_simulation(
 ```
 
 ```{r s1 portfolio distribution, echo = FALSE}
-result_1$plots$portfolio_diagnostics$portfolio_distribution
+print(result_1$plots$portfolio_diagnostics$portfolio_distribution)
 ```
 
 You'll still need to render `README.Rmd` regularly, to keep `README.md` up-to-date. `devtools::build_readme()` is handy for this.
