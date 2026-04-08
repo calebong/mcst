@@ -94,7 +94,7 @@ result_stag_exogenous_propagation <- result_stag$stressed_plots$exogenous_propag
 ```{r save stagflation, include=FALSE}
 # Save plot to file
 ggsave("man/figures/result_stag_portfolio_distribution_comparison.png", result_stag_portfolio_distribution_comparison, width = 10, height = 7, dpi = 150)
-ggsave("man/figures/result_stag_exogenous_propagation.png", result_stag_exogenous_propagation, width = 10, height = 7, dpi = 150)
+ggsave("man/figures/result_stag_exogenous_propagation.png", result_stag_exogenous_propagation, width = 10, height = 7, dpi = 150) 
 
 ```
 
