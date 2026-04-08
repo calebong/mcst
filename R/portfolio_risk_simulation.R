@@ -243,7 +243,7 @@ calculate_garch_vol <- function(returns, forecast_horizon = 1) {
     # sensibly bounded between the minimum and maximum conditional variance.
     uncond_var_i <- tryCatch({
       uv <- rugarch::uncvariance(fit)
-      if(is.finite(uv) && uv > 0 && sqrt(uv) < 5 * sd(returns[, i]))
+      if(is.finite(uv) && uv > 0)
         uv
       else
         mean(as.numeric(sigma(fit))^2)   # empirical fallback
