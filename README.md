@@ -93,7 +93,7 @@ increases by a factor of 1.1x and 1.5x respectively.
 library(mcst)
 
 exogenous_shock            <- list(SPY = -0.05, Crude = 0.20) # stagflationary-like shock; -5% to SPY, +20% to crude oil
-exogenous_volatility_shock <- list(SPY = 1.1,   Crude = 1.5) # SPY and Crude volatility increases by a factor of 1.1x and 1.5x respectively 
+exogenous_volatility_shock <- list(SPY = 1.1,   Crude = 1.5) # SPY and Crude volatility increase
 
 # Basic simulation with equal weights
 result_stag <- portfolio_risk_simulation(
@@ -115,10 +115,12 @@ result_stag <- portfolio_risk_simulation(
 )
 ```
 
+# Example Analysis
+
 Assets with high SPY correlation (JPM, NVDA) absorb the largest mean
 shift from the SPY leg, contributing to negative expected portfolio
 returns; XOM’s positive Crude correlation and beta provides a partial
-positive return offset of expected portfolio returns.
+positive return offset to expected portfolio returns.
 
 ![](man/figures/result_stag_exogenous_propagation.png)
 
