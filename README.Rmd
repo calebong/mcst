@@ -13,12 +13,16 @@ knitr::opts_chunk$set(
 )
 ```
 
-# mcst
+# Package mcst: Overview
 
 <!-- badges: start -->
 <!-- badges: end -->
 
-The goal of mcst is to ...
+**mcst** is an R package that delivers end-to-end workflows for portfolio risk and return simulations, risk analysis, and stress testing. Key features include:
+- Modeling of endogenous and exogenous shocks
+- Multiple return distributions (Normal, t, Skewed Generalized T)
+- Option for Copula-based dependence structures (Gaussian and t-copula)
+- Choice of forward-looking variance estimation for covariance matrix (Sample, EWMA, GARCH)
 
 ## Installation
 
@@ -33,22 +37,44 @@ devtools::install_github("calebong/mcst")
 
 This is a basic example which shows you how to solve a common problem:
 
-```{r example}
-library(mcst)
-## basic example code
+```{r load data, include=FALSE}
+library(tidyverse)
+library(ggplot2)
+load( "/Users/Caleb/Documents/Working Directory/mcst/data/returns_data.RData")
+load( "/Users/Caleb/Documents/Working Directory/mcst/data/exo_data.RData")
+
+returns_data=returns_data %>% select(week, NVDA, JPM, XOM)
 ```
 
-What is special about using `README.Rmd` instead of just `README.md`? You can include R chunks like so:
+## Quick Start:
 
-```{r cars}
-summary(cars)
+A sample portfolio of 3 equal-weighted stocks as stocks (endogenous factors) and 2 market-wide (exogenous) factors - SPY and Crude Oil.
+
+```{r pressure, echo = FALSE}
+head(returns_data)
+head(exo_data)
+```
+
+Basic simulation with equal portfolio weights
+
+```{r s1, echo = FALSE}
+library(mcst)
+
+# Basic simulation with equal weights
+result_1 <- portfolio_risk_simulation(
+  historical_returns = returns_data
+)
+```
+
+```{r s1 portfolio distribution, echo = FALSE}
+result_1$plots$portfolio_diagnostics$portfolio_distribution
 ```
 
 You'll still need to render `README.Rmd` regularly, to keep `README.md` up-to-date. `devtools::build_readme()` is handy for this.
 
 You can also embed plots, for example:
 
-```{r pressure, echo = FALSE}
+```{r pressure plot, echo = FALSE}
 plot(pressure)
 ```
 
