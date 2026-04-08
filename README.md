@@ -12,8 +12,9 @@ simulation, risk assessment, and stress testing. It enables users to
 model shocks from both endogenous (portfolio-driven) and exogenous
 (market-driven) sources. The package offers a flexible framework for
 asset return modeling using multiple distribution families, copula-based
-dependence structures, and forward-looking covariance estimation. \##
-Installation
+dependence structures, and forward-looking covariance estimation.
+
+## Installation
 
 You can install the development version of mcst from
 [GitHub](https://github.com/) with
@@ -116,6 +117,13 @@ result_stag <- portfolio_risk_simulation(
 ```
 
 # Example Analysis
+
+We can access diagnostics from the list output object as such:
+
+``` r
+result_stag$stressed_plots$exogenous_propagation
+result_stag$stressed_plots$portfolio_distribution_comparison
+```
 
 Assets with high SPY correlation (JPM, NVDA) absorb the largest mean
 shift from the SPY leg, contributing to negative expected portfolio
