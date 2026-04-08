@@ -1,11 +1,318 @@
+#' Check if a matrix is positive definite
+#'
+#' Internal helper function that check for positive definiteness of a matrix.
+#' Used internally by \code{fix_covariance()}.
+#' @param x A matrix.
+#' @return A Boolean TRUE or FALSE.
+#' @noRd
+is.positive.definite <- function(x) {
+  if(any(is.na(x)) || any(is.infinite(x))) return(FALSE)
+  if(!is.matrix(x)) return(FALSE)
+  if(nrow(x) != ncol(x)) return(FALSE)
+  eigen_values <- tryCatch({
+    eigen(x, symmetric = TRUE, only.values = TRUE)$values
+  }, error = function(e) {
+    return(rep(-1, nrow(x)))
+  })
+  return(min(eigen_values) > 1e-8)
+}
+#'
+#' Fix covariance matrix to be positive definite
+#'
+#' This function checks if a covariance matrix is positive definite and
+#' repairs it if necessary using the nearest positive definite matrix.
+#' Used internally by \code{simulate_portfolio_returns()}.
+#' @param cov_mat A numeric matrix. The covariance matrix to be checked and
+#'   potentially repaired.
+#' @return A positive definite covariance matrix.
+#' @noRd
+fix_covariance <- function(cov_mat) {
+  if(!is.matrix(cov_mat)) cov_mat <- as.matrix(cov_mat)
+  if(any(is.na(cov_mat)) || any(is.infinite(cov_mat))) {
+    diag_vals <- diag(cov_mat)
+    diag_vals[is.na(diag_vals) | is.infinite(diag_vals)] <- 0.01
+    cov_mat <- diag(diag_vals)
+  }
+  if(!is.positive.definite(cov_mat)) {
+    cov_mat <- as.matrix(nearPD(cov_mat, corr = FALSE)$mat)
+  }
+  return(cov_mat)
+}
+#'
+#' Calibrate optimal degrees of freedom for multivariate t-distribution
+#'
+#' Internal helper that finds the optimal degrees of freedom parameter for a
+#' t-distribution fitted to return data using maximum likelihood estimation.
+#'
+#' @param returns A numeric vector of asset returns
+#' @param df_range Numeric vector. Range of degrees of freedom to search over.
+#'   Default is seq(2.5, 10, by = 0.5).
+#'
+#' @return Integer. Optimal degrees of freedom value.
+#'
+#' @details
+#' The function standardizes returns and evaluates the log-likelihood across
+#' a grid of df values. The df that maximizes the log-likelihood is returned.
+#'
+#' @noRd
+calibrate_df_mvt <- function(returns, df_range = seq(2.5, 10, by = 0.5)) {
+  returns_std <- (returns - mean(returns)) / sd(returns)
+  best_df     <- 4
+  best_loglik <- -Inf
+  for(df in df_range) {
+    tryCatch({
+      loglik <- sum(dt(returns_std, df = df, log = TRUE) - log(sd(returns)))
+      if(loglik > best_loglik) {
+        best_loglik <- loglik
+        best_df     <- df
+      }
+    }, error = function(e) {})
+  }
+  return(best_df)
+}
+#' Calibrate parameters for Skewed Generalized T distribution
+#'
+#' Internal helper that estimates parameters for the Skewed Generalized T (SGT)
+#' distribution using one of several calibration methods.
+#'
+#' @param returns A numeric vector of asset returns
+#' @param method Character string specifying calibration method:
+#'   \itemize{
+#'     \item \code{"mle"}: Maximum likelihood estimation (full optimization)
+#'     \item \code{"tail"}: Heuristic based on tail ratios (default)
+#'     \item \code{"empirical"}: Based on empirical skewness
+#'     \item \code{"default"}: Fallback to conservative parameters
+#'   }
+#'
+#' @return A list containing:
+#'   \item{lambda}{Skewness parameter (between -0.9 and 0.9)}
+#'   \item{p}{Left tail parameter (degrees of freedom for left tail)}
+#'   \item{q}{Right tail parameter (degrees of freedom for right tail)}
+#'   \item{converged}{Logical indicating successful convergence (for MLE method)}
+#'
+#' @details
+#' The SGT distribution is a flexible distribution that can capture skewness and
+#' heavy tails. The \code{"tail"} method uses heuristics based on the ratio of
+#' 99\% VaR to standard deviation to select parameters that match observed tail
+#' behavior. This is much faster than MLE and often sufficient for risk modeling.
+#'
+#' @importFrom moments skewness
+#' @importFrom sgt dsgt
+#' @noRd
+calibrate_sgt <- function(returns, method = "tail") {
+
+  if(method == "mle") {
+    init_lambda <- skewness(returns) / 3
+    init_lambda <- max(-0.8, min(0.8, init_lambda))
+
+    neg_log_lik <- function(params, data) {
+      mu     <- params[1]
+      sigma  <- params[2]
+      lambda <- params[3]
+      p      <- params[4]
+      q      <- params[5]
+      if(sigma <= 0 || abs(lambda) >= 0.99 || p <= 2 || q <= 2) return(1e10)
+      ll <- sum(dsgt(data, mu = mu, sigma = sigma,
+                     lambda = lambda, p = p, q = q, log = TRUE))
+      return(-ll)
+    }
+
+    tryCatch({
+      opt_result <- optim(
+        c(mean(returns), sd(returns), init_lambda, 4, 4),
+        neg_log_lik, data = returns, method = "L-BFGS-B",
+        lower = c(-0.5, 0.01, -0.9, 2.1, 2.1),
+        upper = c(0.5,  1,     0.9, 10,  10),
+        control = list(maxit = 500)
+      )
+      return(list(lambda = opt_result$par[3],
+                  p = opt_result$par[4],
+                  q = opt_result$par[5],
+                  converged = TRUE))
+    }, error = function(e) {
+      # Fall back to tail method if MLE fails
+      return(calibrate_sgt(returns, method = "tail"))
+    })
+
+  } else if(method == "tail") {
+    var_95     <- quantile(returns, 0.05)
+    var_99     <- quantile(returns, 0.01)
+    tail_ratio <- abs(var_99) / sd(returns)
+
+    # Heuristic mapping from tail ratio to SGT parameters
+    if(tail_ratio > 3.5)      { lambda <- -0.7; p <- 2.5; q <- 6   }
+    else if(tail_ratio > 3.0) { lambda <- -0.6; p <- 2.8; q <- 5.5 }
+    else if(tail_ratio > 2.5) { lambda <- -0.5; p <- 3.2; q <- 5   }
+    else if(tail_ratio > 2.0) { lambda <- -0.4; p <- 3.5; q <- 4.5 }
+    else if(tail_ratio > 1.5) { lambda <- -0.2; p <- 4;   q <- 4   }
+    else                      { lambda <-  0;   p <- 5;   q <- 5   }
+
+    return(list(lambda = lambda, p = p, q = q, converged = TRUE))
+
+  } else if(method == "empirical") {
+    emp_skew <- skewness(returns)
+    lambda   <- max(-0.8, min(0.8, emp_skew / 2.5))
+    return(list(lambda = lambda, p = 4, q = 4, converged = TRUE))
+
+  } else {
+    # Default conservative parameters
+    return(list(lambda = -0.3, p = 4, q = 4, converged = TRUE))
+  }
+}
+#'
+#' Calculate GJR-GARCH forward volatility
+#'
+#' Internal helper that estimates conditional volatility using a GJR-GARCH(1,1)
+#' model for each asset in the return series. This captures leverage effects
+#' where negative returns have a larger impact on volatility than positive returns.
+#'
+#' @param returns A numeric matrix or data frame of asset returns with
+#'   dimensions n_obs × n_assets. Columns should be named with asset identifiers.
+#' @param forecast_horizon Integer. Number of steps ahead to forecast volatility.
+#'   Default is 1 (one-period-ahead forecast).
+#'
+#' @return A list containing four elements:
+#'   \item{forecast_cov}{n_assets × n_assets diagonal covariance matrix with
+#'     forecast variances on the diagonal}
+#'   \item{cond_vol_mat}{n_obs × n_assets matrix of in-sample conditional
+#'     volatilities (sigma_t) for each asset}
+#'   \item{uncond_vol}{Named vector of unconditional (long-run) volatilities
+#'     for each asset}
+#'   \item{forecast_vol}{Named vector of 1-step-ahead volatility forecasts}
+#'
+#' @details
+#' The function fits a separate GJR-GARCH(1,1) model to each asset using the
+#' \code{rugarch} package with a skewed Student-t distribution. The GJR-GARCH
+#' model incorporates leverage effects through an asymmetry parameter (gamma):
+#'
+#' \deqn{\sigma_t^2 = \omega + (\alpha + \gamma \cdot I_{t-1}) \varepsilon_{t-1}^2 + \beta \sigma_{t-1}^2}
+#'
+#' where \eqn{I_{t-1} = 1} if \eqn{\varepsilon_{t-1} < 0} and 0 otherwise.
+#'
+#' The function includes robust fallback logic for unconditional volatility
+#' estimation: if \code{rugarch::uncvariance()} fails or returns implausible
+#' values, it falls back to the empirical mean of in-sample conditional variances.
+#'
+#' @importFrom rugarch ugarchspec ugarchfit ugarchforecast sigma uncvariance
+#' @importFrom stats sd
+#' @noRd
+calculate_garch_vol <- function(returns, forecast_horizon = 1) {
+  if(!requireNamespace("rugarch", quietly = TRUE)) {
+    stop("Package 'rugarch' is required for GARCH volatility estimation. ",
+         "Please install it with: install.packages('rugarch')")
+  }
+
+  n_assets    <- ncol(returns)
+  n_obs       <- nrow(returns)
+  asset_names <- colnames(returns)
+
+  garch_spec <- ugarchspec(
+    variance.model    = list(model = "gjrGARCH", garchOrder = c(1, 1)),
+    mean.model        = list(armaOrder = c(0, 0), include.mean = FALSE),
+    distribution.model = "sstd"
+  )
+
+  var_forecasts <- numeric(n_assets)
+  cond_vol_mat  <- matrix(NA_real_, n_obs, n_assets,
+                          dimnames = list(NULL, asset_names))
+  uncond_vol    <- numeric(n_assets)
+  forecast_vol  <- numeric(n_assets)
+  names(uncond_vol) <- names(forecast_vol) <- asset_names
+
+  for(i in seq_len(n_assets)) {
+    fit   <- ugarchfit(spec = garch_spec, data = returns[, i], solver = "hybrid")
+    fcast <- ugarchforecast(fit, n.ahead = forecast_horizon)
+
+    fcast_sigma_1         <- sigma(fcast)[1, 1]
+    var_forecasts[i]      <- fcast_sigma_1^2
+    forecast_vol[i]       <- fcast_sigma_1
+
+    # In-sample conditional volatilities (one per observation)
+    cond_vol_mat[, i]     <- as.numeric(sigma(fit))
+
+    # Unconditional (long-run) volatility.
+    #
+    # We use rugarch's own uncvariance() to extract unconditional variance.
+    #
+    # uncvariance(fit) accounts for the correct kappa = E[z² I(z<0)] for
+    # the fitted innovation distribution (sstd here), not the hardcoded 0.5.
+    #
+    # If uncvariance() fails or returns a non-finite/implausible value, we
+    # fall back to the empirical mean conditional variance — the time-average
+    # of sigma²(t) from the in-sample fit.  This is always finite and
+    # sensibly bounded between the minimum and maximum conditional variance.
+    uncond_var_i <- tryCatch({
+      uv <- rugarch::uncvariance(fit)
+      if(is.finite(uv) && uv > 0 && sqrt(uv) < 5 * sd(returns[, i]))
+        uv
+      else
+        mean(as.numeric(sigma(fit))^2)   # empirical fallback
+    }, error = function(e) mean(as.numeric(sigma(fit))^2))
+
+    uncond_vol[i] <- sqrt(pmax(uncond_var_i, 0))
+  }
+
+  forecast_cov <- matrix(0, n_assets, n_assets)
+  diag(forecast_cov) <- var_forecasts
+  rownames(forecast_cov) <- colnames(forecast_cov) <- asset_names
+  forecast_cov <- fix_covariance(forecast_cov)
+
+  return(list(
+    forecast_cov = forecast_cov,
+    cond_vol_mat = cond_vol_mat,
+    uncond_vol   = uncond_vol,
+    forecast_vol = forecast_vol
+  ))
+}
+#' Calculate EWMA covariance matrix
+#'
+#' Internal helper that estimates covariance using the Exponentially Weighted
+#' Moving Average (EWMA) approach, as used in RiskMetrics.
+#'
+#' @param returns A numeric matrix or data frame of asset returns with
+#'   dimensions n_obs × n_assets. Columns should be named with asset identifiers.
+#' @param lambda Numeric. Decay factor for the EWMA model. Default is 0.94,
+#'   which is the RiskMetrics recommended value for daily data. Lower values
+#'   give more weight to recent observations.
+#'
+#' @return A positive definite covariance matrix of dimensions n_assets × n_assets.
+#'
+#' @details
+#' The EWMA covariance estimator updates the covariance matrix recursively:
+#'
+#' \deqn{\Sigma_t = \lambda \Sigma_{t-1} + (1-\lambda) \mathbf{r}_t \mathbf{r}_t^\top}
+#'
+#' where \eqn{\mathbf{r}_t} is the vector of returns at time t. The recursion
+#' is initialized with the sample covariance matrix.
+#'
+#' The EWMA approach gives exponentially declining weights to past observations,
+#' making it more responsive to recent market conditions than the equally-weighted
+#' sample covariance. The half-life of the weights is approximately \eqn{\log(0.5)/\log(\lambda)}.
+#'
+#' The resulting covariance matrix is passed through \code{fix_covariance()} to
+#' ensure positive definiteness.
+#'
+#' @seealso \code{\link{fix_covariance}} for positive definiteness repair
+#' @noRd
+calculate_ewma_covariance <- function(returns, lambda = 0.94) {
+  n_assets <- ncol(returns)
+  n_obs    <- nrow(returns)
+  ewma_cov <- cov(returns)
+
+  for(t in 2:n_obs) {
+    r_t <- if(n_assets == 1) matrix(as.matrix(returns[t, ]), ncol = 1) else
+      matrix(as.matrix(returns[t, ]), nrow = 1)
+    outer_product <- t(r_t) %*% r_t
+    ewma_cov <- lambda * ewma_cov + (1 - lambda) * outer_product
+  }
+
+  ewma_cov <- fix_covariance(ewma_cov)
+  return(ewma_cov)
+}
 #' Monte Carlo Portfolio Risk Simulation with Stress Testing
 #'
 #' @description
 #' An end-to-end function for multi-asset portfolio risk modelling.
-#' Given a historical return series, the function estimates the joint
-#' return distribution, constructs a forward-looking covariance matrix,
-#' simulates portfolio return paths, and optionally applies structured
-#' stress scenarios whose effects propagate through the correlation structure.
 #'
 #' @param historical_returns A data frame, tibble, or matrix of asset returns.
 #'   One column per asset, one row per observation period. An optional date
@@ -149,225 +456,6 @@
 #' @importFrom moments skewness kurtosis
 #'
 #' @export
-
-
-# =============================================================================
-# PORTFOLIO RISK SIMULATION — COMPLETE SCRIPT
-# Supports: rmvnorm, rmvt, rsgt distributions
-#           Gaussian and t-copula
-#           EWMA, GARCH, and sample covariance estimation
-#           Stress testing with propagation
-# =============================================================================
-
-# =============================================================================
-# HELPER FUNCTIONS
-# =============================================================================
-
-# Check positive definiteness
-is.positive.definite <- function(x) {
-  if(any(is.na(x)) || any(is.infinite(x))) return(FALSE)
-  if(!is.matrix(x)) return(FALSE)
-  if(nrow(x) != ncol(x)) return(FALSE)
-  eigen_values <- tryCatch({
-    eigen(x, symmetric = TRUE, only.values = TRUE)$values
-  }, error = function(e) {
-    return(rep(-1, nrow(x)))
-  })
-  return(min(eigen_values) > 1e-8)
-}
-
-# Robust covariance matrix correction
-fix_covariance <- function(cov_mat) {
-  if(!is.matrix(cov_mat)) cov_mat <- as.matrix(cov_mat)
-  if(any(is.na(cov_mat)) || any(is.infinite(cov_mat))) {
-    diag_vals <- diag(cov_mat)
-    diag_vals[is.na(diag_vals) | is.infinite(diag_vals)] <- 0.01
-    cov_mat <- diag(diag_vals)
-  }
-  if(!is.positive.definite(cov_mat)) {
-    cov_mat <- as.matrix(nearPD(cov_mat, corr = FALSE)$mat)
-  }
-  return(cov_mat)
-}
-
-# =============================================================================
-# CALIBRATION FUNCTIONS
-# =============================================================================
-
-# Calibrate optimal degrees of freedom for t-distribution
-calibrate_df_mvt <- function(returns, df_range = seq(2.5, 10, by = 0.5)) {
-  returns_std <- (returns - mean(returns)) / sd(returns)
-  best_df     <- 4
-  best_loglik <- -Inf
-  for(df in df_range) {
-    tryCatch({
-      loglik <- sum(dt(returns_std, df = df, log = TRUE) - log(sd(returns)))
-      if(loglik > best_loglik) {
-        best_loglik <- loglik
-        best_df     <- df
-      }
-    }, error = function(e) {})
-  }
-  return(best_df)
-}
-
-# Calibrate optimal parameters for Skewed Generalized T distribution
-calibrate_sgt <- function(returns, method = "tail") {
-
-  if(method == "mle") {
-    init_lambda <- skewness(returns) / 3
-    init_lambda <- max(-0.8, min(0.8, init_lambda))
-
-    neg_log_lik <- function(params, data) {
-      mu     <- params[1]; sigma  <- params[2]
-      lambda <- params[3]; p      <- params[4]; q <- params[5]
-      if(sigma <= 0 || abs(lambda) >= 0.99 || p <= 2 || q <= 2) return(1e10)
-      ll <- sum(dsgt(data, mu = mu, sigma = sigma,
-                     lambda = lambda, p = p, q = q, log = TRUE))
-      return(-ll)
-    }
-
-    tryCatch({
-      opt_result <- optim(
-        c(mean(returns), sd(returns), init_lambda, 4, 4),
-        neg_log_lik, data = returns, method = "L-BFGS-B",
-        lower = c(-0.5, 0.01, -0.9, 2.1, 2.1),
-        upper = c(0.5,  1,     0.9, 10,  10),
-        control = list(maxit = 500)
-      )
-      return(list(lambda = opt_result$par[3], p = opt_result$par[4],
-                  q = opt_result$par[5], converged = TRUE))
-    }, error = function(e) {
-      return(calibrate_sgt(returns, method = "tail"))
-    })
-
-  } else if(method == "tail") {
-    var_95     <- quantile(returns, 0.05)
-    var_99     <- quantile(returns, 0.01)
-    tail_ratio <- abs(var_99) / sd(returns)
-
-    if(tail_ratio > 3.5)      { lambda <- -0.7; p <- 2.5; q <- 6   }
-    else if(tail_ratio > 3.0) { lambda <- -0.6; p <- 2.8; q <- 5.5 }
-    else if(tail_ratio > 2.5) { lambda <- -0.5; p <- 3.2; q <- 5   }
-    else if(tail_ratio > 2.0) { lambda <- -0.4; p <- 3.5; q <- 4.5 }
-    else if(tail_ratio > 1.5) { lambda <- -0.2; p <- 4;   q <- 4   }
-    else                      { lambda <-  0;   p <- 5;   q <- 5   }
-
-    return(list(lambda = lambda, p = p, q = q, converged = TRUE))
-
-  } else if(method == "empirical") {
-    emp_skew <- skewness(returns)
-    lambda   <- max(-0.8, min(0.8, emp_skew / 2.5))
-    return(list(lambda = lambda, p = 4, q = 4, converged = TRUE))
-
-  } else {
-    return(list(lambda = -0.3, p = 4, q = 4, converged = TRUE))
-  }
-}
-
-# =============================================================================
-# COVARIANCE ESTIMATION FUNCTIONS
-# =============================================================================
-
-# GJR-GARCH forward volatility (diagonal covariance — marginals only)
-# Returns a list:
-#   $forecast_cov      — n×n diagonal covariance (1-step-ahead variances)
-#   $cond_vol_mat      — n_obs × n_assets matrix of in-sample conditional sigmas
-#   $uncond_vol        — named vector of unconditional (long-run) volatilities
-#   $forecast_vol      — named vector of 1-step-ahead sigma forecasts
-calculate_garch_vol <- function(returns, forecast_horizon = 1) {
-  if(!requireNamespace("rugarch", quietly = TRUE)) install.packages("rugarch")
-  library(rugarch)
-
-  n_assets    <- ncol(returns)
-  n_obs       <- nrow(returns)
-  asset_names <- colnames(returns)
-
-  garch_spec <- ugarchspec(
-    variance.model    = list(model = "gjrGARCH", garchOrder = c(1, 1)),
-    mean.model        = list(armaOrder = c(0, 0), include.mean = FALSE),
-    distribution.model = "sstd"
-  )
-
-  var_forecasts <- numeric(n_assets)
-  cond_vol_mat  <- matrix(NA_real_, n_obs, n_assets,
-                           dimnames = list(NULL, asset_names))
-  uncond_vol    <- numeric(n_assets)
-  forecast_vol  <- numeric(n_assets)
-  names(uncond_vol) <- names(forecast_vol) <- asset_names
-
-  for(i in seq_len(n_assets)) {
-    fit   <- ugarchfit(spec = garch_spec, data = returns[, i], solver = "hybrid")
-    fcast <- ugarchforecast(fit, n.ahead = forecast_horizon)
-
-    fcast_sigma_1         <- sigma(fcast)[1, 1]
-    var_forecasts[i]      <- fcast_sigma_1^2
-    forecast_vol[i]       <- fcast_sigma_1
-
-    # In-sample conditional volatilities (one per observation)
-    cond_vol_mat[, i]     <- as.numeric(sigma(fit))
-
-    # Unconditional (long-run) volatility.
-    #
-    # We use rugarch's own uncondVar() rather than the hand-rolled
-    # omega / (1 - alpha - gamma/2 - beta) formula.  The manual formula
-    # diverges when persistence is close to 1 (which is typical for
-    # equity returns): if alpha + gamma/2 + beta = 0.999, the denominator
-    # is 0.001, amplifying omega by 1000x and producing wildly inflated
-    # unconditional volatility.
-    #
-    # uncondVar(fit) accounts for the correct kappa = E[z² I(z<0)] for
-    # the fitted innovation distribution (sstd here), not the hardcoded 0.5.
-    #
-    # If uncondVar() fails or returns a non-finite/implausible value, we
-    # fall back to the empirical mean conditional variance — the time-average
-    # of sigma²(t) from the in-sample fit.  This is always finite and
-    # sensibly bounded between the minimum and maximum conditional variance.
-    uncond_var_i <- tryCatch({
-      uv <- rugarch::uncvariance(fit)
-      if(is.finite(uv) && uv > 0 && sqrt(uv) < 5 * sd(returns[, i]))
-        uv
-      else
-        mean(as.numeric(sigma(fit))^2)   # empirical fallback
-    }, error = function(e) mean(as.numeric(sigma(fit))^2))
-
-    uncond_vol[i] <- sqrt(pmax(uncond_var_i, 0))
-  }
-
-  forecast_cov <- matrix(0, n_assets, n_assets)
-  diag(forecast_cov) <- var_forecasts
-  rownames(forecast_cov) <- colnames(forecast_cov) <- asset_names
-  forecast_cov <- fix_covariance(forecast_cov)
-
-  return(list(
-    forecast_cov = forecast_cov,
-    cond_vol_mat = cond_vol_mat,
-    uncond_vol   = uncond_vol,
-    forecast_vol = forecast_vol
-  ))
-}
-
-# EWMA covariance
-calculate_ewma_covariance <- function(returns, lambda = 0.94) {
-  n_assets <- ncol(returns)
-  n_obs    <- nrow(returns)
-  ewma_cov <- cov(returns)
-
-  for(t in 2:n_obs) {
-    r_t <- if(n_assets == 1) matrix(as.matrix(returns[t, ]), ncol = 1) else
-             matrix(as.matrix(returns[t, ]), nrow = 1)
-    outer_product <- t(r_t) %*% r_t
-    ewma_cov <- lambda * ewma_cov + (1 - lambda) * outer_product
-  }
-
-  ewma_cov <- fix_covariance(ewma_cov)
-  return(ewma_cov)
-}
-
-# =============================================================================
-# MAIN FUNCTION
-# =============================================================================
-
 portfolio_risk_simulation <- function(
     historical_returns,
     weights           = NULL,
@@ -4284,4 +4372,4 @@ portfolio_risk_simulation <- function(
 
   return(results)
 
-}  # end portfolio_risk_simulation()
+}
