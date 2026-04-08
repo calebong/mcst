@@ -439,8 +439,11 @@ calculate_ewma_covariance <- function(returns, lambda = 0.94) {
 #' \emph{Management Science}, 44(12), 1650--1661.
 #'
 #' @seealso
-#' Vignettes: \code{vignette("portfolio_risk_simulation_vignette", package = "portfolioRisk")}
-#' and \code{vignette("portfolio_risk_simulation_scenarios", package = "portfolioRisk")}
+#' \itemize{
+#'   \item \code{vignette("portfolio_risk_simulation_vignette", package = "mcst")}
+#'   \item \code{vignette("portfolio_risk_simulation_scenarios", package = "mcst")}
+#'   \item \code{\link{portfolio_risk_simulation}} for main function details
+#' }
 #'
 #' @importFrom dplyr select filter mutate group_by summarise ungroup arrange
 #' @importFrom ggplot2 ggplot aes geom_histogram geom_density geom_bar

@@ -5,3 +5,5 @@
 .DS_Store
 .quarto
 .Rdata
+/doc/
+/Meta/

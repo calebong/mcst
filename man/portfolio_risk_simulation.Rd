@@ -187,6 +187,9 @@ Theodossiou, P. (1998). Financial data and the skewed generalised t distribution
 \emph{Management Science}, 44(12), 1650--1661.
 }
 \seealso{
-Vignettes: \code{vignette("portfolio_risk_simulation_vignette", package = "portfolioRisk")}
-and \code{vignette("portfolio_risk_simulation_scenarios", package = "portfolioRisk")}
+\itemize{
+\item \code{vignette("portfolio_risk_simulation_vignette", package = "mcst")}
+\item \code{vignette("portfolio_risk_simulation_scenarios", package = "mcst")}
+\item \code{\link{portfolio_risk_simulation}} for main function details
+}
 }
