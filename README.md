@@ -6,18 +6,24 @@
 <!-- badges: start -->
 <!-- badges: end -->
 
-**mcst** is an R package that delivers end-to-end workflows for
-portfolio risk and return simulations, risk analysis, and stress
-testing. Key features include: - Modeling of endogenous and exogenous
-shocks - Multiple return distributions (Normal, t, Skewed Generalized
-T) - Option for Copula-based dependence structures (Gaussian and
-t-copula) - Choice of forward-looking variance estimation for covariance
-matrix (Sample, EWMA, GARCH)
-
-## Installation
+**mcst** (Monte Carlo & Stress Testing) is an R package that provides
+end-to-end, easily specifiable workflows for portfolio return
+simulation, risk assessment, and stress testing. It enables users to
+model shocks from both endogenous (portfolio-driven) and exogenous
+(market-driven) sources. The package offers a flexible framework for
+asset return modeling using multiple distribution families, copula-based
+dependence structures, and forward-looking covariance estimation. \##
+Installation
 
 You can install the development version of mcst from
 [GitHub](https://github.com/) with:
+
+More information on the package can be found via the function mechanics
+[Introduction to the mcst
+package](https://github.com/calebong/mcst/blob/main/inst/doc/portfolio_risk_simulation_vignette.pdf)
+and usage illustration [Sample Scenario
+Illustrations](https://github.com/calebong/mcst/blob/main/inst/doc/portfolio_risk_simulation_scenarios.pdf)
+documentations.
 
 ``` r
 # install.packages("devtools")
@@ -28,7 +34,7 @@ devtools::install_github("calebong/mcst")
 
 The illustration uses a sample portfolio of 3 equal-weighted stocks
 (endogenous factors) and 2 market-wide, exogenous factors - SPY and
-Crude Oil - as shocks.
+Crude Oil - as shocks. Weekly returns are used.
 
 ``` r
 head(returns_data)
@@ -75,13 +81,18 @@ tail(exo_data)
 ```
 
 Illustration of a stagflationary-like stress scenario: energy costs
-surge while equity markets sell off simultaneously.
+surge while equity markets sell off simultaneously. Options are provided
+to specify whether the shock is endogenous and/or exogenous, and whether
+the shock is applied on to returns and/or volatility. The following
+scenario spceifies a stagflationary shock of -5% and +20% to expected
+returns of SPY and Crude respectively, and that SPY and Crude volatility
+increases by a factor of 1.1x and 1.5x respectively.
 
 ``` r
 library(mcst)
 
 exogenous_shock            <- list(SPY = -0.05, Crude = 0.20) # stagflationary-like shock; -5% to SPY, +20% to crude oil
-exogenous_volatility_shock <- list(SPY = 1.1,     Crude = 1.5) # SPY and Crude volatility increases by a factor of 1.1x and 1.5x respectively 
+exogenous_volatility_shock <- list(SPY = 1.1,   Crude = 1.5) # SPY and Crude volatility increases by a factor of 1.1x and 1.5x respectively 
 
 # Basic simulation with equal weights
 result_stag <- portfolio_risk_simulation(
@@ -103,16 +114,11 @@ result_stag <- portfolio_risk_simulation(
 )
 ```
 
-<figure>
-<img src="man/figures/result_stag_portfolio_distribution_comparison.png"
-alt="“”" />
-<figcaption aria-hidden="true">“”</figcaption>
-</figure>
+Assets with high SPY correlation (JPM, NVDA) absorb the largest mean
+shift from the SPY leg, contributing to negative expected portfolio
+returns; XOM’s positive Crude correlation and beta provides a partial
+positive return offset of expected portfolio returns.
 
-<figure>
-<img src="man/figures/result_stag_exogenous_propagation.png" alt="“”" />
-<figcaption aria-hidden="true">“”</figcaption>
-</figure>
+![](man/figures/result_stag_exogenous_propagation.png)
 
-You’ll still need to render `README.Rmd` regularly, to keep `README.md`
-up-to-date. `devtools::build_readme()` is handy for this.
+![](man/figures/result_stag_portfolio_distribution_comparison.png)
