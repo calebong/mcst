@@ -688,7 +688,7 @@ kable(wt, booktabs = TRUE, escape = TRUE,
 
 ## Number of Simulation Draws
 
-The argument `n_sim_returns` controls the number of joint return draws. When `NULL` (default), the function uses the length of the historical data series.
+The argument `n_sim_returns` controls the number of joint return draws. When `NULL` (default), the number of simulations conducted is 10000.
 
 \newpage
 
