@@ -104,16 +104,13 @@ result_stag <- portfolio_risk_simulation(
 ```
 
 <figure>
-<img
-src="/Users/Caleb/Documents/Working%20Directory/mcst/man/figures/result_stag_portfolio_distribution_comparison.png"
+<img src="man/figures/result_stag_portfolio_distribution_comparison.png"
 alt="“”" />
 <figcaption aria-hidden="true">“”</figcaption>
 </figure>
 
 <figure>
-<img
-src="/Users/Caleb/Documents/Working%20Directory/mcst/man/figures/result_stag_exogenous_propagation.png"
-alt="“”" />
+<img src="man/figures/result_stag_exogenous_propagation.png" alt="“”" />
 <figcaption aria-hidden="true">“”</figcaption>
 </figure>
 

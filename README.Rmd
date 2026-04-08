@@ -98,8 +98,8 @@ ggsave("man/figures/result_stag_exogenous_propagation.png", result_stag_exogenou
 
 ```
 
-![""](/Users/Caleb/Documents/Working Directory/mcst/man/figures/result_stag_portfolio_distribution_comparison.png)
+![""](man/figures/result_stag_portfolio_distribution_comparison.png)
 
-![""](/Users/Caleb/Documents/Working Directory/mcst/man/figures/result_stag_exogenous_propagation.png)
+![""](man/figures/result_stag_exogenous_propagation.png)
 
 You'll still need to render `README.Rmd` regularly, to keep `README.md` up-to-date. `devtools::build_readme()` is handy for this.
