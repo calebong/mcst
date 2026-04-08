@@ -97,7 +97,7 @@ calibrate_df_mvt <- function(returns, df_range = seq(2.5, 10, by = 0.5)) {
 #' behavior. This is much faster than MLE and often sufficient for risk modeling.
 #'
 #' @importFrom moments skewness
-#' @importFrom sgt dsgt
+#' @importFrom sgt dsgt psgt rsgt qsgt
 #' @noRd
 calibrate_sgt <- function(returns, method = "tail") {
 
