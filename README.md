@@ -135,3 +135,20 @@ positive return offset to expected portfolio returns.
 ![](man/figures/result_stag_exogenous_propagation.png)
 
 ![](man/figures/result_stag_portfolio_distribution_comparison.png)
+
+We can also inspect the portfolio risk contributions under non-stressed
+and stressed scenarios:
+
+``` r
+decomp_result_stag <- decompose_portfolio_risk(result_stag, 
+                                            var_method = "tail")
+```
+
+``` r
+decomp_result_stag$plots$summary_canvas
+decomp_result_5$risk_decomposition
+```
+
+![](man/figures/decomp_result_stag_risk_decomposition.png)
+
+![](man/figures/decomp_result_stag_summary_canvas.png)

@@ -39,7 +39,7 @@ library(ggplot2)
 load( "/Users/Caleb/Documents/Working Directory/mcst/data/returns_data.RData")
 load( "/Users/Caleb/Documents/Working Directory/mcst/data/exo_data.RData")
 
-returns_data=returns_data %>% select(week, NVDA, JPM, XOM)
+returns_data=returns_data %>% dplyr::select(week, NVDA, JPM, XOM)
 ```
 
 ## Example
@@ -92,7 +92,7 @@ result_stag_exogenous_propagation <- result_stag$stressed_plots$exogenous_propag
 ```{r save stagflation, include=FALSE}
 # Save plot to file
 ggsave("man/figures/result_stag_portfolio_distribution_comparison.png", result_stag_portfolio_distribution_comparison, width = 10, height = 7, dpi = 150)
-
+ggsave("man/figures/result_stag_exogenous_propagation.png", result_stag_exogenous_propagation, width = 10, height = 7, dpi = 150)
 ```
 
 # Example Analysis
@@ -111,3 +111,32 @@ Assets with high SPY correlation (JPM, NVDA) absorb the largest mean shift from 
 
 ![](man/figures/result_stag_portfolio_distribution_comparison.png)
 
+We can also inspect the portfolio risk contributions under non-stressed and stressed scenarios:
+
+```{r s5-run the decomposition, cache=TRUE, results="hide", warning=FALSE, message=FALSE}
+decomp_result_stag <- decompose_portfolio_risk(result_stag, 
+                                            var_method = "tail")
+
+```
+
+```{r show decomposition, echo = FALSE, results = 'hide'}
+# Save plot to file
+decomp_result_stag_summary_canvas <- decomp_result_stag$plots$summary_canvas
+decomp_result_stag_risk_decomposition <- decomp_result_stag$plots$risk_decomposition
+```
+
+```{r save decomposition, include=FALSE}
+# Save plot to file
+ggsave("man/figures/decomp_result_stag_risk_decomposition.png", decomp_result_stag_risk_decomposition , width = 10, height = 7, dpi = 150)
+ggsave("man/figures/decomp_result_stag_summary_canvas.png", decomp_result_stag_summary_canvas, width = 10, height = 7, dpi = 150)
+```
+
+``` r
+decomp_result_stag$plots$summary_canvas
+decomp_result_5$risk_decomposition
+```
+
+
+![](man/figures/decomp_result_stag_risk_decomposition.png)
+
+![](man/figures/decomp_result_stag_summary_canvas.png)
