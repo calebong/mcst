@@ -24,7 +24,7 @@ knitr::opts_chunk$set(
 
 You can install the development version of mcst from [GitHub](https://github.com/) with `remotes::install_github("calebong/mcst", dependencies = TRUE)`.
 
-More information on the package can be found via the function mechanics [Introduction to the mcst package](https://github.com/calebong/mcst/blob/main/inst/doc/portfolio_risk_simulation_vignette.pdf) and usage illustration [Sample Scenario Illustrations](https://github.com/calebong/mcst/blob/main/inst/doc/portfolio_risk_simulation_scenarios.pdf) documentations.
+More information on the package can be found via the function mechanics [Introduction to the mcst package](https://github.com/calebong/mcst/blob/main/inst/doc/portfolio_risk_simulation_vignette.pdf),usage illustration [Sample Scenario Illustrations](https://github.com/calebong/mcst/blob/main/inst/doc/portfolio_risk_simulation_scenarios.pdf), and reference manual [Reference Manual](https://github.com/calebong/mcst/blob/main/mcst_0.1.0.pdf) documentations.
 
 ``` r
 # install.packages("devtools")

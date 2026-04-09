@@ -22,9 +22,11 @@ You can install the development version of mcst from
 
 More information on the package can be found via the function mechanics
 [Introduction to the mcst
-package](https://github.com/calebong/mcst/blob/main/inst/doc/portfolio_risk_simulation_vignette.pdf)
-and usage illustration [Sample Scenario
-Illustrations](https://github.com/calebong/mcst/blob/main/inst/doc/portfolio_risk_simulation_scenarios.pdf)
+package](https://github.com/calebong/mcst/blob/main/inst/doc/portfolio_risk_simulation_vignette.pdf),usage
+illustration [Sample Scenario
+Illustrations](https://github.com/calebong/mcst/blob/main/inst/doc/portfolio_risk_simulation_scenarios.pdf),
+and reference manual [Reference
+Manual](https://github.com/calebong/mcst/blob/main/mcst_0.1.0.pdf)
 documentations.
 
 ``` r
