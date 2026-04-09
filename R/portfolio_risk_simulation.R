@@ -243,7 +243,7 @@ calculate_garch_vol <- function(returns, forecast_horizon = 1) {
     # sensibly bounded between the minimum and maximum conditional variance.
     uncond_var_i <- tryCatch({
       uv <- rugarch::uncvariance(fit)
-      if(is.finite(uv) && uv > 0)
+      if(is.finite(uv) && uv > 0 && sqrt(uv) < 5 * sd(returns[, i]))
         uv
       else
         mean(as.numeric(sigma(fit))^2)   # empirical fallback
@@ -489,6 +489,14 @@ portfolio_risk_simulation <- function(
 
   set.seed(seed)
 
+  # Central tendency: use median for rsgt (skewed), mean otherwise.
+  # Only affects DISPLAY, REPORTING and PLOTS. base_mu = colMeans() is unchanged
+  # so the simulation location stays consistent with fitted marginals.
+  .use_median_display <- sim_returns_dist == "rsgt"
+  .central_label      <- if (.use_median_display) "Median" else "Mean"
+  .central_sym        <- if (.use_median_display) "Med" else "μ"
+  .central_stat       <- function(x) if (.use_median_display) median(x) else mean(x)
+
   # ===========================================================================
   # 0. ARGUMENT NORMALISATION — list → named numeric vector / matrix
   # ===========================================================================
@@ -666,8 +674,8 @@ portfolio_risk_simulation <- function(
   if(!is.null(date_col_name)) {
     col <- historical_returns[[date_col_name]]
     dates_raw <- if(inherits(col, "Date")) col
-                 else if(inherits(col, c("POSIXct","POSIXlt"))) as.Date(col)
-                 else suppressWarnings(as.Date(as.character(col)))
+    else if(inherits(col, c("POSIXct","POSIXlt"))) as.Date(col)
+    else suppressWarnings(as.Date(as.character(col)))
     dates_raw <- dates_raw[!is.na(dates_raw)]
     cat(sprintf("  ℹ️ Date column detected: '%s' (%d dates, %s to %s)\n",
                 date_col_name, length(dates_raw),
@@ -1196,7 +1204,7 @@ portfolio_risk_simulation <- function(
     warning(sprintf("%d weight rows renormalised (max dev: %.2e)",
                     length(minor_rows), max(abs(row_sums[minor_rows] - 1))))
     weights_matrix[minor_rows, ] <- weights_matrix[minor_rows, , drop = FALSE] /
-                                     row_sums[minor_rows]
+      row_sums[minor_rows]
   }
 
   # 2c. Portfolio type
@@ -1276,12 +1284,12 @@ portfolio_risk_simulation <- function(
 
   # Internal helper: moment-match SGT location/scale
   fit_sgt_moments <- function(target_mean, target_sd, lam, p, q,
-                               n_mc = 100000, seed_offset = 0) {
+                              n_mc = 100000, seed_offset = 0) {
     tryCatch({
       # Save and restore global RNG state so that set.seed() here does not
       # corrupt the random stream for subsequent copula fitting calls.
       old_seed <- if(exists(".Random.seed", envir = .GlobalEnv, inherits = FALSE))
-                    .GlobalEnv$.Random.seed else NULL
+        .GlobalEnv$.Random.seed else NULL
       on.exit({
         if(!is.null(old_seed)) .GlobalEnv$.Random.seed <- old_seed
         else if(exists(".Random.seed", envir = .GlobalEnv, inherits = FALSE))
@@ -1330,7 +1338,7 @@ portfolio_risk_simulation <- function(
                                 sqrt(diag(base_sigma)) * 100), collapse = ", ")))
       cat("\nHistorical correlation matrix:\n"); print(round(historical_cor, 4))
 
-    # --- A2: Multivariate Student-t ---
+      # --- A2: Multivariate Student-t ---
     } else if(sim_returns_dist == "rmvt") {
 
       cat("\nDistribution: Multivariate Student-t\n")
@@ -1376,21 +1384,21 @@ portfolio_risk_simulation <- function(
       rmvt_scale <- scale_matrix
       rmvt_df    <- df_joint
 
-    # --- A3: SGT marginals + Cholesky ---
+      # --- A3: SGT marginals + Cholesky ---
     } else if(sim_returns_dist == "rsgt") {
 
       cat("\nDistribution: SGT marginals + Cholesky correlation\n")
       cat("Note: No closed-form multivariate SGT — Gaussian copula approximation\n\n")
 
       lam_vec <- if(calibrate_params && !is.null(calibrated_lambdas)) calibrated_lambdas
-                 else if(!is.null(asset_lambdas)) asset_lambdas
-                 else rep(-0.3, n_assets)
+      else if(!is.null(asset_lambdas)) asset_lambdas
+      else rep(-0.3, n_assets)
       p_vec   <- if(calibrate_params && !is.null(calibrated_ps)) calibrated_ps
-                 else if(!is.null(asset_p)) asset_p
-                 else rep(4, n_assets)
+      else if(!is.null(asset_p)) asset_p
+      else rep(4, n_assets)
       q_vec   <- if(calibrate_params && !is.null(calibrated_qs)) calibrated_qs
-                 else if(!is.null(asset_q)) asset_q
-                 else rep(4, n_assets)
+      else if(!is.null(asset_q)) asset_q
+      else rep(4, n_assets)
 
       fitted_params <- vector("list", n_assets)
       names(fitted_params) <- asset_names
@@ -1436,9 +1444,9 @@ portfolio_risk_simulation <- function(
     ks_results_df    <- NULL   # populated in Step 6.5 when copula = TRUE
     copula_df_fitted <- NA
 
-  # =========================================================================
-  # PATH B: COPULA
-  # =========================================================================
+    # =========================================================================
+    # PATH B: COPULA
+    # =========================================================================
   } else {
 
     cat("\nPath: COPULA — marginals + copula separately\n")
@@ -1461,11 +1469,11 @@ portfolio_risk_simulation <- function(
         fitted_params[[i]] <- list(mean = mu_i, sd = sigma_i, dist = "normal")
         cat(sprintf("  %s: N(μ=%.4f, σ=%.4f)\n", asset_names[i], mu_i, sigma_i))
 
-      # B2: Student-t
+        # B2: Student-t
       } else if(sim_returns_dist == "rmvt") {
         df_i <- if(calibrate_params && !is.null(calibrated_dfs)) calibrated_dfs[i]
-                else if(!is.null(asset_dfs)) asset_dfs[i]
-                else df
+        else if(!is.null(asset_dfs)) asset_dfs[i]
+        else df
         if(df_i <= 2) stop(sprintf("Asset %s: df = %.2f must be > 2", asset_names[i], df_i))
 
         mu_i          <- mean(returns_i)
@@ -1477,20 +1485,20 @@ portfolio_risk_simulation <- function(
         cat(sprintf("  %s: t(μ=%.4f, σ_scale=%.4f, σ_marginal=%.4f, df=%.2f)\n",
                     asset_names[i], mu_i, sigma_i, marginal_sd_i, df_i))
 
-      # B3: SGT
+        # B3: SGT
       } else if(sim_returns_dist == "rsgt") {
         lam_i <- if(calibrate_params && !is.null(calibrated_lambdas)) calibrated_lambdas[i]
-                 else if(!is.null(asset_lambdas)) asset_lambdas[i]
-                 else {
-                   sgt_calib <- tryCatch(
-                     calibrate_sgt(returns_i, method = calibration_method),
-                     error = function(e) list(lambda = -0.3, p = 4, q = 4))
-                   sgt_calib$lambda
-                 }
+        else if(!is.null(asset_lambdas)) asset_lambdas[i]
+        else {
+          sgt_calib <- tryCatch(
+            calibrate_sgt(returns_i, method = calibration_method),
+            error = function(e) list(lambda = -0.3, p = 4, q = 4))
+          sgt_calib$lambda
+        }
         p_i <- if(calibrate_params && !is.null(calibrated_ps)) calibrated_ps[i]
-               else if(!is.null(asset_p)) asset_p[i] else 4
+        else if(!is.null(asset_p)) asset_p[i] else 4
         q_i <- if(calibrate_params && !is.null(calibrated_qs)) calibrated_qs[i]
-               else if(!is.null(asset_q)) asset_q[i] else 4
+        else if(!is.null(asset_q)) asset_q[i] else 4
 
         if(abs(lam_i) >= 1) stop(sprintf("Asset %s: |lambda| must be < 1", asset_names[i]))
         if(p_i <= 0)         stop(sprintf("Asset %s: p must be > 0", asset_names[i]))
@@ -1630,7 +1638,7 @@ portfolio_risk_simulation <- function(
     spearman_cor_u  <- cor(u_fitted, method = "spearman")
 
     warmstart_cor <- if(copula_type == "t") sin(pi / 2 * kendall_tau) else
-                       2 * sin(pi / 6 * spearman_cor_u)
+      2 * sin(pi / 6 * spearman_cor_u)
     diag(warmstart_cor) <- 1
     warmstart_cor <- (warmstart_cor + t(warmstart_cor)) / 2
     if(!is.positive.definite(warmstart_cor))
@@ -1671,12 +1679,12 @@ portfolio_risk_simulation <- function(
       if(copula_type == "gaussian") {
 
         gauss_cop <- normalCopula(param = warmstart_params,
-                                   dim = n_assets, dispstr = fit_dispstr)
+                                  dim = n_assets, dispstr = fit_dispstr)
         fit <- if(fit_method == "mpl") {
           fitCopula(gauss_cop, u_fitted, method = "mpl",
-                     start = warmstart_params,
-                     optim.method = "L-BFGS-B",
-                     optim.control = list(maxit = 1000L, factr = 1e7))
+                    start = warmstart_params,
+                    optim.method = "L-BFGS-B",
+                    optim.control = list(maxit = 1000L, factr = 1e7))
         } else {
           fitCopula(gauss_cop, u_fitted, method = "itau")
         }
@@ -1704,7 +1712,7 @@ portfolio_risk_simulation <- function(
         warmstart_full <- c(warmstart_params, df_init)
 
         t_cop_obj <- tCopula(param = warmstart_params, dim = n_assets,
-                              dispstr = fit_dispstr, df = df_init, df.fixed = FALSE)
+                             dispstr = fit_dispstr, df = df_init, df.fixed = FALSE)
 
         # ── Fit correlation structure ─────────────────────────────────────────
         # For method="itau": the copula package estimates the CORRELATION params
@@ -1719,9 +1727,9 @@ portfolio_risk_simulation <- function(
         #   3. Final fallback: df_init (= 8)
         fit <- if(fit_method == "mpl") {
           fitCopula(t_cop_obj, u_fitted, method = "mpl",
-                     start = warmstart_full,
-                     optim.method = "L-BFGS-B",
-                     optim.control = list(maxit = 1000L, factr = 1e7))
+                    start = warmstart_full,
+                    optim.method = "L-BFGS-B",
+                    optim.control = list(maxit = 1000L, factr = 1e7))
         } else {
           fitCopula(t_cop_obj, u_fitted, method = "itau")
         }
@@ -1754,8 +1762,8 @@ portfolio_risk_simulation <- function(
               neg_ll_df <- function(df_val) {
                 if(df_val <= 2) return(1e12)
                 t_fixed <- tCopula(param = cor_params, dim = n_assets,
-                                    dispstr = fit_dispstr, df = df_val,
-                                    df.fixed = TRUE)
+                                   dispstr = fit_dispstr, df = df_val,
+                                   df.fixed = TRUE)
                 tryCatch(-sum(dCopula(u_fitted, t_fixed, log = TRUE)),
                          error = function(e) 1e12)
               }
@@ -1828,7 +1836,7 @@ portfolio_risk_simulation <- function(
       cat(sprintf("  ⚠️ Copula fitting failed: %s\n  Falling back to Kendall's \u03c4 inversion\n",
                   e$message))
       fallback_cor <- if(copula_type == "t") sin(pi / 2 * kendall_tau) else
-                        2 * sin(pi / 6 * spearman_cor_u)
+        2 * sin(pi / 6 * spearman_cor_u)
       diag(fallback_cor) <- 1
       fallback_cor <- (fallback_cor + t(fallback_cor)) / 2
       if(!is.positive.definite(fallback_cor))
@@ -1992,7 +2000,7 @@ portfolio_risk_simulation <- function(
     # a tiny jitter (1e-7 scale) before the test only — u_data itself is unchanged.
     cat("\n  Uniformity diagnostic (KS test):\n")
     ks_results <- data.frame(Asset = asset_names, KS_stat = NA_real_,
-                              p_value = NA_real_, Flag = "", stringsAsFactors = FALSE)
+                             p_value = NA_real_, Flag = "", stringsAsFactors = FALSE)
     for(i in seq_len(n_assets)) {
       u_ks <- u_data[, i]
       if(any(duplicated(u_ks))) {
@@ -2028,14 +2036,14 @@ portfolio_risk_simulation <- function(
       cat("\n  ℹ️ Gaussian copula: asymptotic tail dependence = 0\n")
     } else if(copula_type == "t" && copula_success) {
       df_used <- if(!is.null(copula_result$df) && is.finite(copula_result$df))
-                   copula_result$df else copula_df
+        copula_result$df else copula_df
 
       if(!is.null(copula_result$tail_dep_mat)) {
         tail_dependence <- copula_result$tail_dep_mat
         cat(sprintf("\n  Tail dependence retrieved from Step 5 (df=%.4f)\n", df_used))
       } else {
         tail_dependence <- matrix(NA_real_, n_assets, n_assets,
-                                   dimnames = list(asset_names, asset_names))
+                                  dimnames = list(asset_names, asset_names))
         diag(tail_dependence) <- 1
         for(ii in seq_len(n_assets - 1))
           for(jj in seq(ii + 1, n_assets)) {
@@ -2102,7 +2110,7 @@ portfolio_risk_simulation <- function(
   # The "non-shocked block" n is the remaining portfolio assets.
 
   has_endo_shock <- (!is.null(asset_shock)      && any(asset_shock != 0)) ||
-                   (!is.null(volatility_shock)  && any(volatility_shock != 1))
+    (!is.null(volatility_shock)  && any(volatility_shock != 1))
   has_exog_shock <- !is.null(exogenous_shock) || !is.null(exogenous_volatility_shock)
 
   if(has_endo_shock || has_exog_shock) {
@@ -2183,9 +2191,9 @@ portfolio_risk_simulation <- function(
     n_vol_shocked      <- length(vol_shocked_assets)
 
     exog_shocked_idx     <- if(!is.null(exogenous_shock))
-                              match(names(exogenous_shock), exog_names) else integer(0)
+      match(names(exogenous_shock), exog_names) else integer(0)
     exog_vol_shocked_idx <- if(!is.null(exogenous_volatility_shock))
-                              match(names(exogenous_volatility_shock), exog_names) else integer(0)
+      match(names(exogenous_volatility_shock), exog_names) else integer(0)
     n_exog_shocked       <- length(exog_shocked_idx)
 
     cat(sprintf("  Portfolio return-shocked : %d — %s\n", n_shocked,
@@ -2273,9 +2281,9 @@ portfolio_risk_simulation <- function(
 
         # Build augmented covariance
         Sigma_pe_blk <- if(!is.null(Sigma_pe_use) && n_exog > 0) Sigma_pe_use else
-                          matrix(0, n_assets, max(n_exog, 1))
+          matrix(0, n_assets, max(n_exog, 1))
         Sigma_ee_blk <- if(!is.null(Sigma_ee_use) && n_exog > 0) Sigma_ee_use else
-                          diag(max(n_exog, 1))
+          diag(max(n_exog, 1))
 
         if(n_exog > 0) {
           Sig_aug <- rbind(cbind(sigma_stressed, Sigma_pe_blk),
@@ -2329,7 +2337,7 @@ portfolio_risk_simulation <- function(
         mu_stressed[shocked_assets] <- base_mu[shocked_assets] + delta_endo
         if(length(n_aug_idx) > 0)
           mu_stressed[n_aug_idx] <- mu_aug[n_aug_idx] +
-                                    as.vector(Sigma_ns %*% Sigma_ss_inv %*% delta_s)
+          as.vector(Sigma_ns %*% Sigma_ss_inv %*% delta_s)
 
         cat("\nConditional mean propagation:\n")
         cat(sprintf("  %-22s  %10s %10s %10s  %s\n",
@@ -2382,7 +2390,7 @@ portfolio_risk_simulation <- function(
             var_ee        <- Sigma_ee_hist[ei, ei]
             if(var_ee > 1e-12)
               exog_vol_addon <- exog_vol_addon +
-                factor * (sig_pe_col %*% t(sig_pe_col)) / var_ee
+              factor * (sig_pe_col %*% t(sig_pe_col)) / var_ee
           }
         }
 
@@ -2398,9 +2406,9 @@ portfolio_risk_simulation <- function(
                           exog_names[ei], k_e, k_e^2 - 1))
           }
           cat(sprintf("  Asset marginal vols: pre=%s | post=%s\n",
-              paste(sprintf("%.3f%%", sqrt(diag(base_sigma)) * 100), collapse=", "),
-              paste(sprintf("%.3f%%", sqrt(pmax(diag(sigma_stressed), 0)) * 100),
-                    collapse=", ")))
+                      paste(sprintf("%.3f%%", sqrt(diag(base_sigma)) * 100), collapse=", "),
+                      paste(sprintf("%.3f%%", sqrt(pmax(diag(sigma_stressed), 0)) * 100),
+                            collapse=", ")))
         }
       }
 
@@ -2443,7 +2451,7 @@ portfolio_risk_simulation <- function(
     for(i in seq_len(n_assets)) {
       sb   <- sqrt(base_sigma[i, i]); ss <- sqrt(sigma_stressed[i, i])
       flag <- if(i %in% vol_shocked_assets) "[VOL SHOCKED]"
-              else if(abs(ss - sb) > 1e-8) "[propagated]" else ""
+      else if(abs(ss - sb) > 1e-8) "[propagated]" else ""
       cat(sprintf("  %-22s %12.4f %12.4f %12.4f  %s\n",
                   asset_names[i], sb*100, ss*100, (ss-sb)*100, flag))
     }
@@ -2452,10 +2460,10 @@ portfolio_risk_simulation <- function(
       all_exog_t <- unique(c(exog_names[exog_shocked_idx], exog_names[exog_vol_shocked_idx]))
       for(en in all_exog_t) {
         rd  <- if(!is.null(exogenous_shock) && en %in% names(exogenous_shock))
-                 exogenous_shock[en] else 0
+          exogenous_shock[en] else 0
         vm  <- if(!is.null(exogenous_volatility_shock) &&
                   en %in% names(exogenous_volatility_shock))
-                 exogenous_volatility_shock[en] else 1
+          exogenous_volatility_shock[en] else 1
         cat(sprintf("    %-20s  \u0394ret=%+.4f  vol_mult=%.4fx\n", en, rd, vm))
       }
     }
@@ -2498,8 +2506,8 @@ portfolio_risk_simulation <- function(
   # rmvt scale matrices
   if(sim_returns_dist == "rmvt") {
     df_sim <- if(exists("rmvt_df") && is.finite(rmvt_df)) rmvt_df
-              else if(exists("df_joint") && is.finite(df_joint)) df_joint
-              else df
+    else if(exists("df_joint") && is.finite(df_joint)) df_joint
+    else df
     if(df_sim <= 2) stop(sprintf("df_sim = %.4f must be > 2", df_sim))
 
     scale_pre <- if(exists("rmvt_scale") && !is.null(rmvt_scale) && !copula) {
@@ -2524,7 +2532,7 @@ portfolio_risk_simulation <- function(
   # rsgt copula df
   if(sim_returns_dist == "rsgt") {
     copula_df_sim <- if(exists("copula_df_fitted") && is.finite(copula_df_fitted))
-                       copula_df_fitted else copula_df
+      copula_df_fitted else copula_df
     cat(sprintf("  rsgt copula df: %.4f\n", copula_df_sim))
   }
 
@@ -2550,8 +2558,8 @@ portfolio_risk_simulation <- function(
     rmvt(n_sim, delta = delta, sigma = sigma, df = df)
 
   simulate_rsgt <- function(n_sim, mu_vec, sigma_mat, ref_sigma_mat, fp_list,
-                             lam_vec, p_vec, q_vec,
-                             copula_type_sim, copula_df_sim, n_assets) {
+                            lam_vec, p_vec, q_vec,
+                            copula_type_sim, copula_df_sim, n_assets) {
     # sigma_mat     : current (possibly stressed) covariance matrix
     # ref_sigma_mat : reference (pre-stress) covariance matrix — used to compute
     #                 vol scaling ratios relative to the fitted SGT parameters
@@ -2581,11 +2589,11 @@ portfolio_risk_simulation <- function(
       sigma_j_scaled <- fp_list[[j]]$sd * vol_ratio_j
       mean_shift     <- mu_vec[j] - fp_list[[j]]$mean
       sim_mat[, j]   <- qsgt(U[, j],
-                              mu     = fp_list[[j]]$mean,
-                              sigma  = sigma_j_scaled,
-                              lambda = lam_vec[j],
-                              p      = p_vec[j],
-                              q      = q_vec[j]) + mean_shift
+                             mu     = fp_list[[j]]$mean,
+                             sigma  = sigma_j_scaled,
+                             lambda = lam_vec[j],
+                             p      = p_vec[j],
+                             q      = q_vec[j]) + mean_shift
     }
     return(sim_mat)
   }
@@ -2730,10 +2738,10 @@ portfolio_risk_simulation <- function(
     target_vol <- sqrt(as.numeric(t(w) %*% use_sigma_pre %*% w)) * 100
     sim_vol    <- sd(portfolio_returns_pre_flat) * 100
     target_ret <- sum(w * use_mu_pre) * 100
-    sim_ret    <- mean(portfolio_returns_pre_flat) * 100
+    sim_ret    <- .central_stat(portfolio_returns_pre_flat) * 100
     cat(sprintf("\n  Sanity check:\n"))
     cat(sprintf("    %-20s  Target: %8.4f%%  Simulated: %8.4f%%\n",
-                "Portfolio μ", target_ret, sim_ret))
+                sprintf("Portfolio %s", .central_label), target_ret, sim_ret))
     cat(sprintf("    %-20s  Target: %8.4f%%  Simulated: %8.4f%%\n",
                 "Portfolio σ", target_vol, sim_vol))
     if(abs(sim_vol / target_vol - 1) > 0.1)
@@ -2838,8 +2846,12 @@ portfolio_risk_simulation <- function(
   print_stats <- function(s) {
     cat(sprintf("\n  Sample size: %s\n", format(s$n, big.mark = ",")))
     cat(sprintf("\n  RETURN (%s)\n", data_freq_label))
-    cat(sprintf("  %-30s : %+.4f%%\n", "Expected Return (mean)",   s$mean   * 100))
-    cat(sprintf("  %-30s : %+.4f%%\n", "Expected Return (median)", s$median * 100))
+    cat(sprintf("  %-30s : %+.4f%%  [primary]\n",
+                sprintf("Expected Return (%s)", .central_label),
+                if (.use_median_display) s$median * 100 else s$mean * 100))
+    cat(sprintf("  %-30s : %+.4f%%\n",
+                sprintf("Expected Return (%s)", if (.use_median_display) "mean" else "median"),
+                if (.use_median_display) s$mean * 100 else s$median * 100))
     if(abs(s$mean - s$median) * 100 > 0.05)
       cat(sprintf("  %-30s : %+.4f%%  [skew indicator]\n",
                   "Mean − Median", (s$mean - s$median) * 100))
@@ -2893,8 +2905,11 @@ portfolio_risk_simulation <- function(
 
     cat(sprintf("\n  %-30s %12s %12s %12s\n", "Metric", "Pre-Stress", "Post-Stress", "Change"))
     cat(sprintf("  %s\n", strrep("-", 70)))
-    cat(sprintf("  %-30s %11.4f%% %11.4f%% %+11.4f%%\n", "Expected Return",
-                stats_pre$mean*100, stats_post$mean*100, delta_mean))
+    cat(sprintf("  %-30s %11.4f%% %11.4f%% %+11.4f%%\n",
+                sprintf("Exp Return (%s)", .central_label),
+                if(.use_median_display) stats_pre$median*100  else stats_pre$mean*100,
+                if(.use_median_display) stats_post$median*100 else stats_post$mean*100,
+                if(.use_median_display) (stats_post$median - stats_pre$median)*100 else delta_mean))
     cat(sprintf("  %-30s %11.4f%% %11.4f%% %+11.4f%%\n", "Volatility",
                 stats_pre$vol*100, stats_post$vol*100, delta_vol))
     cat(sprintf("  %-30s %12.4f  %12.4f  %+12.4f\n",  "Skewness",
@@ -2983,19 +2998,20 @@ portfolio_risk_simulation <- function(
     labs(title    = sprintf("Asset %s Return Distributions", data_freq_label),
          subtitle = if(has_fitted_overlay)
            sprintf("Blue: Empirical | Red: Fitted %s", toupper(sim_returns_dist))
-           else "Empirical distribution",
+         else "Empirical distribution",
          x = sprintf("%s Return (%%)", data_freq_label), y = "Density") +
     theme_risk
 
   if(!is.null(overlay_df))
     p_asset <- p_asset +
-      geom_line(data = overlay_df, aes(x = x, y = y),
-                color = "red", linewidth = 0.9, alpha = 0.85, inherit.aes = FALSE)
+    geom_line(data = overlay_df, aes(x = x, y = y),
+              color = "red", linewidth = 0.9, alpha = 0.85, inherit.aes = FALSE)
 
   portfolio_plots$asset_distributions <- p_asset
   cat("  ✅ Plot 1: Asset distributions\n")
 
   # Plot 2: Portfolio distribution
+  port_central_pct <- if (.use_median_display) stats_pre$median * 100 else stats_pre$mean * 100
   port_mean_pct  <- stats_pre$mean   * 100
   port_vol_pct   <- stats_pre$vol    * 100
   var95_pct      <- stats_pre$var_95 * 100
@@ -3007,13 +3023,13 @@ portfolio_risk_simulation <- function(
     geom_histogram(aes(y = after_stat(density)),
                    bins = 60, fill = "lightblue", alpha = 0.6, color = "white") +
     geom_density(color = "darkblue", linewidth = 0.9) +
-    geom_vline(xintercept = port_mean_pct,              color = "blue",        linewidth = 1,   linetype = "solid") +
-    geom_vline(xintercept = port_mean_pct - port_vol_pct, color = "forestgreen", linewidth = 0.8, linetype = "dashed") +
-    geom_vline(xintercept = port_mean_pct + port_vol_pct, color = "forestgreen", linewidth = 0.8, linetype = "dashed") +
+    geom_vline(xintercept = port_central_pct,           color = "blue",        linewidth = 1,   linetype = "solid") +
+    geom_vline(xintercept = port_central_pct - port_vol_pct, color = "forestgreen", linewidth = 0.8, linetype = "dashed") +
+    geom_vline(xintercept = port_central_pct + port_vol_pct, color = "forestgreen", linewidth = 0.8, linetype = "dashed") +
     geom_vline(xintercept = var95_pct,                  color = "orange",      linewidth = 0.9, linetype = "dotted") +
     geom_vline(xintercept = var99_pct,                  color = "red",         linewidth = 0.9, linetype = "dotted") +
-    annotate("text", x = port_mean_pct, y = Inf,
-             label = sprintf("μ=%.2f%%", port_mean_pct),
+    annotate("text", x = port_central_pct, y = Inf,
+             label = sprintf("%s=%.2f%%", .central_sym, port_central_pct),
              vjust = 2, hjust = -0.1, size = 3, color = "blue") +
     annotate("text", x = var95_pct, y = Inf,
              label = sprintf("VaR95\n%.2f%%", var95_pct),
@@ -3022,8 +3038,8 @@ portfolio_risk_simulation <- function(
              label = sprintf("VaR99\n%.2f%%", var99_pct),
              vjust = 2, hjust = 1.1, size = 2.5, color = "red") +
     labs(title    = sprintf("Portfolio %s Return Distribution (Pre-Stress)", data_freq_label),
-         subtitle = sprintf("Mean:%.3f%%  Vol:%.3f%%  VaR95:%.3f%%  CVaR95:%.3f%%  Skew:%.3f  ExKurt:%.3f",
-                            port_mean_pct, port_vol_pct, var95_pct, cvar95_pct,
+         subtitle = sprintf("%s:%.3f%%  Vol:%.3f%%  VaR95:%.3f%%  CVaR95:%.3f%%  Skew:%.3f  ExKurt:%.3f",
+                            .central_label, port_central_pct, port_vol_pct, var95_pct, cvar95_pct,
                             stats_pre$skewness, stats_pre$excess_kurtosis),
          x = sprintf("%s Return (%%)", data_freq_label), y = "Density") +
     theme_risk
@@ -3046,7 +3062,7 @@ portfolio_risk_simulation <- function(
     cor_melt <- reshape2::melt(cor_mat)
     colnames(cor_melt) <- c("Var1", "Var2", "value")
     cor_melt$label <- ifelse(cor_melt$Var1 == cor_melt$Var2, "1.00",
-                              sprintf("%.2f", cor_melt$value))
+                             sprintf("%.2f", cor_melt$value))
     ggplot(cor_melt, aes(x = Var1, y = Var2, fill = value)) +
       geom_tile(color = "white") +
       scale_fill_gradient2(low = "#2166ac", high = "#d6604d", mid = "white",
@@ -3119,9 +3135,9 @@ portfolio_risk_simulation <- function(
 
     # Build observation dates (fall back to integer index if no date column)
     plot_dates <- if(!is.null(dates_raw) && length(dates_raw) == n_obs)
-                    dates_raw
-                  else
-                    seq_len(n_obs)
+      dates_raw
+    else
+      seq_len(n_obs)
 
     # Assemble long-form data frame for faceting
     ts_rows <- lapply(seq_len(n_assets), function(i) {
@@ -3174,8 +3190,8 @@ portfolio_risk_simulation <- function(
                    colour = col_uncond, linewidth = 0.6, linetype = "dashed") +
         annotate("text",
                  x     = if(inherits(df_i$Date[1], "Date"))
-                           min(df_i$Date) + as.numeric(diff(range(df_i$Date))) * 0.02
-                         else min(df_i$Date),
+                   min(df_i$Date) + as.numeric(diff(range(df_i$Date))) * 0.02
+                 else min(df_i$Date),
                  y     = uncond_val * 1.08,
                  label = sprintf("Unconditional \u03c3 = %.3f%%", uncond_val),
                  colour = col_uncond, size = 2.4, hjust = 0, fontface = "italic") +
@@ -3390,13 +3406,13 @@ portfolio_risk_simulation <- function(
     kendall_tau_mat <- cor(returns_numeric, method = "kendall")
     # Kendall → copula ρ conversion (same formula as warm_start)
     kendall_rho_mat <- if(copula_type == "t") sin(pi / 2 * kendall_tau_mat) else
-                         2 * sin(pi / 6 * kendall_tau_mat)   # Spearman → Pearson for Gaussian
+      2 * sin(pi / 6 * kendall_tau_mat)   # Spearman → Pearson for Gaussian
 
     pair_rows <- list()
     for(ii in seq_len(n_assets - 1)) {
       for(jj in seq(ii + 1, n_assets)) {
         td_val      <- if(!is.null(tail_dependence) && !is.na(tail_dependence[ii, jj]))
-                         tail_dependence[ii, jj] else NA_real_
+          tail_dependence[ii, jj] else NA_real_
         hist_rho    <- historical_cor[ii, jj]          # Pearson ρ (for reference)
         kendall_rho <- kendall_rho_mat[ii, jj]         # sin(π/2 × τ)  (apples-to-apples)
         cop_rho     <- copula_cor[ii, jj]              # fitted copula ρ
@@ -3454,12 +3470,12 @@ portfolio_risk_simulation <- function(
     } else {
       # Gaussian copula: asymptotic tail dependence is always zero — show info panel
       p_tail <- ggplot(data.frame(x = 0.5, y = 0.5,
-                                   label = paste0(
-                                     "Gaussian Copula\n",
-                                     "Asymptotic tail dependence = 0\n",
-                                     "by construction.\n\n",
-                                     "Switch to copula_type = 't'\n",
-                                     "to estimate tail dependence.")),
+                                  label = paste0(
+                                    "Gaussian Copula\n",
+                                    "Asymptotic tail dependence = 0\n",
+                                    "by construction.\n\n",
+                                    "Switch to copula_type = 't'\n",
+                                    "to estimate tail dependence.")),
                        aes(x = x, y = y, label = label)) +
         geom_text(size = 4, color = "gray30", hjust = 0.5, vjust = 0.5) +
         labs(title    = "Tail Dependence",
@@ -3491,8 +3507,8 @@ portfolio_risk_simulation <- function(
                fontface = "italic", hjust = 1) +
       geom_point(aes(color = AbsDelta), size = 2.5, alpha = 0.85) +
       scale_color_gradient(low = "#4393c3", high = "#d73027",
-                            name = "|\u0394\u03c1|",
-                            labels = scales::number_format(accuracy = 0.001)) +
+                           name = "|\u0394\u03c1|",
+                           labels = scales::number_format(accuracy = 0.001)) +
       {if(requireNamespace("ggrepel", quietly = TRUE)) {
         ggrepel::geom_text_repel(
           data = pair_df[!is.na(pair_df$Label), ],
@@ -3558,7 +3574,7 @@ portfolio_risk_simulation <- function(
     has_endo_plot  <- !is.null(asset_shock) && any(asset_shock != 0)
     has_exog_plot  <- has_exogenous && (
       (!is.null(exogenous_shock)            && length(exogenous_shock)            > 0) ||
-      (!is.null(exogenous_volatility_shock) && length(exogenous_volatility_shock) > 0)
+        (!is.null(exogenous_volatility_shock) && length(exogenous_volatility_shock) > 0)
     )
 
     shocked_indices      <- if(has_endo_plot) which(asset_shock != 0) else integer(0)
@@ -3578,9 +3594,9 @@ portfolio_risk_simulation <- function(
     cat("CREATING STRESS PROPAGATION PLOTS\n")
     cat("========================================================================\n")
     scenario_label <- if(has_endo_plot && has_exog_plot) "C: Mixed (endogenous + exogenous)"
-                      else if(has_endo_plot)             "A: Endogenous (portfolio assets)"
-                      else if(has_exog_plot)             "B: Exogenous (non-portfolio instruments)"
-                      else                               "None"
+    else if(has_endo_plot)             "A: Endogenous (portfolio assets)"
+    else if(has_exog_plot)             "B: Exogenous (non-portfolio instruments)"
+    else                               "None"
     cat(sprintf("  Scenario             : %s\n", scenario_label))
     if(has_endo_plot)
       cat(sprintf("  Endo shocked (%d)   : %s\n", shocked_count,
@@ -3615,9 +3631,9 @@ portfolio_risk_simulation <- function(
         ei      <- which(exog_names == en)
         var_e   <- Sigma_ee_hist[ei, ei]
         shock_e <- if(!is.null(exogenous_shock) && en %in% names(exogenous_shock))
-                     exogenous_shock[en] else 0   # 0 when instrument is vol-shocked only
+          exogenous_shock[en] else 0   # 0 when instrument is vol-shocked only
         vol_m   <- if(!is.null(exogenous_volatility_shock) && en %in% names(exogenous_volatility_shock))
-                     exogenous_volatility_shock[en] else 1
+          exogenous_volatility_shock[en] else 1
 
         for(pi in seq_len(n_assets)) {
           cov_pe   <- Sigma_pe_hist[pi, ei]
@@ -3628,8 +3644,8 @@ portfolio_risk_simulation <- function(
           # ρ = Cov(X_port_i, X_exog_e) / sqrt(Var(X_port_i) * Var(X_exog_e))
           # All terms from historical sample covariance → guaranteed ∈ [-1, 1]
           rho <- if(var_e > 1e-12 && var_port > 1e-12)
-                   cov_pe / sqrt(var_port * var_e)
-                 else NA_real_
+            cov_pe / sqrt(var_port * var_e)
+          else NA_real_
           rho <- if(!is.na(rho)) max(-1, min(1, rho)) else NA_real_  # numerical safety
 
           rows[[length(rows) + 1]] <- data.frame(
@@ -3665,7 +3681,7 @@ portfolio_risk_simulation <- function(
         for(en in exog_shocked_names) {
           sub   <- exog_beta_df[exog_beta_df$Exog_Asset == en, ]
           shock_e <- if(!is.null(exogenous_shock) && en %in% names(exogenous_shock))
-                       exogenous_shock[en] * 100 else 0
+            exogenous_shock[en] * 100 else 0
           for(pi in seq_len(n_assets)) {
             row_i <- sub[sub$Portfolio_Asset == asset_names[pi], ]
             if(nrow(row_i) == 1)
@@ -3766,7 +3782,7 @@ portfolio_risk_simulation <- function(
                         y = Correlation, fill = Correlation)) +
           geom_bar(stat = "identity", alpha = 0.85) +
           scale_fill_gradient2(low = "#2166ac", high = "#d73027", mid = "white",
-                                midpoint = 0, limits = c(-1, 1), name = "\u03c1") +
+                               midpoint = 0, limits = c(-1, 1), name = "\u03c1") +
           geom_hline(yintercept = c(0, 0.5, -0.5),
                      linetype = c("dashed","dotted","dotted"), color = "gray60") +
           geom_text(aes(label = sprintf("%.3f", Correlation)),
@@ -3793,8 +3809,8 @@ portfolio_risk_simulation <- function(
       exog_sum_df <- data.frame(
         Asset        = exog_shocked_names,
         Shock_pct    = sapply(exog_shocked_names, function(en)
-                         if(!is.null(exogenous_shock) && en %in% names(exogenous_shock))
-                           exogenous_shock[en] * 100 else 0),
+          if(!is.null(exogenous_shock) && en %in% names(exogenous_shock))
+            exogenous_shock[en] * 100 else 0),
         Vol_Mult     = sapply(exog_shocked_names, function(en)
           if(!is.null(exogenous_volatility_shock) && en %in% names(exogenous_volatility_shock))
             exogenous_volatility_shock[en] else 1),
@@ -3804,7 +3820,7 @@ portfolio_risk_simulation <- function(
       exog_sum_df$Label    <- sprintf("%+.2f%%\n(vol \u00d7%.1f)", exog_sum_df$Shock_pct, exog_sum_df$Vol_Mult)
 
       ggplot(exog_sum_df, aes(x = reorder(Asset, -abs(Shock_pct)),
-                               y = Shock_pct, fill = Positive)) +
+                              y = Shock_pct, fill = Positive)) +
         geom_bar(stat = "identity", alpha = 0.85, width = 0.6) +
         scale_fill_manual(values = c("TRUE" = "forestgreen", "FALSE" = "#d6604d"), guide = "none") +
         geom_hline(yintercept = 0, linetype = "dashed", color = "gray40") +
@@ -3859,7 +3875,7 @@ portfolio_risk_simulation <- function(
           theme_risk + theme(legend.position = "none")
 
         p2 <- ggplot(prop_data, aes(x = reorder(Asset, -Expected_Change),
-                                     y = Expected_Change, fill = Expected_Change >= 0)) +
+                                    y = Expected_Change, fill = Expected_Change >= 0)) +
           geom_bar(stat = "identity", alpha = 0.85) +
           scale_fill_manual(values = c("TRUE" = "forestgreen", "FALSE" = "#d6604d"), guide = "none") +
           geom_hline(yintercept = 0, linetype = "dashed", color = "gray40") +
@@ -3874,10 +3890,10 @@ portfolio_risk_simulation <- function(
           sprintf("Endogenous shock: %.2f%% to %s", shock_size_pct, shocked_asset_name))
 
         p4 <- ggplot(prop_data, aes(x = reorder(Asset, -Correlation),
-                                     y = Correlation, fill = Correlation)) +
+                                    y = Correlation, fill = Correlation)) +
           geom_bar(stat = "identity", alpha = 0.85) +
           scale_fill_gradient2(low = "#2166ac", high = "#d73027", mid = "white",
-                                midpoint = 0, limits = c(-1, 1), name = "\u03c1") +
+                               midpoint = 0, limits = c(-1, 1), name = "\u03c1") +
           geom_hline(yintercept = c(-0.5, 0, 0.5),
                      linetype = c("dotted","dashed","dotted"), color = "gray60") +
           geom_text(aes(label = sprintf("%.3f", Correlation)),
@@ -3932,7 +3948,7 @@ portfolio_risk_simulation <- function(
         p2 <- ggplot(impact_melt, aes(x = Shocked_Asset, y = Asset, fill = Impact)) +
           geom_tile(color = "white") +
           scale_fill_gradient2(low = "#d6604d", high = "#4dac26", mid = "white",
-                                midpoint = 0, name = "\u0394\u03bc (%)") +
+                               midpoint = 0, name = "\u0394\u03bc (%)") +
           geom_text(aes(label = sprintf("%+.3f%%", Impact)), size = 2.8) +
           labs(title    = "Endogenous Propagation Impact Matrix",
                subtitle = "Cell[i,j] = \u0394\u03bc in asset i from shock to portfolio asset j",
@@ -3943,16 +3959,16 @@ portfolio_risk_simulation <- function(
           Asset            = shocked_assets_names,
           Direct_Shock_pct = asset_shock[shocked_indices] * 100,
           Vol_Multiplier   = if(!is.null(volatility_shock)) volatility_shock[shocked_indices]
-                             else rep(1, shocked_count),
+          else rep(1, shocked_count),
           stringsAsFactors = FALSE
         )
         shock_summary$Label <- sprintf("%+.2f%%\n(vol \u00d7%.1f)",
-                                        shock_summary$Direct_Shock_pct,
-                                        shock_summary$Vol_Multiplier)
+                                       shock_summary$Direct_Shock_pct,
+                                       shock_summary$Vol_Multiplier)
 
         p3 <- ggplot(shock_summary, aes(x = reorder(Asset, -abs(Direct_Shock_pct)),
-                                         y = Direct_Shock_pct,
-                                         fill = Direct_Shock_pct >= 0)) +
+                                        y = Direct_Shock_pct,
+                                        fill = Direct_Shock_pct >= 0)) +
           geom_bar(stat = "identity", alpha = 0.85) +
           scale_fill_manual(values = c("TRUE" = "forestgreen", "FALSE" = "#d6604d"), guide = "none") +
           geom_text(aes(label = Label),
@@ -3964,10 +3980,10 @@ portfolio_risk_simulation <- function(
 
         impact_total <- rowSums(impact_matrix[, shocked_indices, drop = FALSE])
         impact_df    <- data.frame(Asset = asset_names, Total_Impact = impact_total,
-                                    Is_Shocked = asset_shock != 0, stringsAsFactors = FALSE)
+                                   Is_Shocked = asset_shock != 0, stringsAsFactors = FALSE)
 
         p4 <- ggplot(impact_df, aes(x = reorder(Asset, Total_Impact),
-                                     y = Total_Impact, fill = Is_Shocked)) +
+                                    y = Total_Impact, fill = Is_Shocked)) +
           geom_bar(stat = "identity", alpha = 0.85) +
           coord_flip() +
           scale_fill_manual(values = c("TRUE" = "coral", "FALSE" = "steelblue"),
@@ -4002,8 +4018,8 @@ portfolio_risk_simulation <- function(
       p_exog_corr    <- make_exog_corr_plot()
       p_exog_beta    <- make_exog_channel_plot()
       p_means        <- if(has_ret_shock_b)
-                          make_means_plot("Portfolio means after exogenous shock propagation")
-                        else NULL
+        make_means_plot("Portfolio means after exogenous shock propagation")
+      else NULL
 
       b_subtitle <- if(has_ret_shock_b && has_vol_shock_b)
         "Exogenous return shock propagated via Σ_pe Σ_ee⁻¹ δ_e; vol shock widened Σ_pp via LTV addon"
@@ -4048,9 +4064,9 @@ portfolio_risk_simulation <- function(
                    Component = "Propagated from exog", stringsAsFactors = FALSE)
       ))
       decomp_long$Component <- factor(decomp_long$Component,
-                                       levels = c("Direct (endo)",
-                                                  "Propagated from endo",
-                                                  "Propagated from exog"))
+                                      levels = c("Direct (endo)",
+                                                 "Propagated from endo",
+                                                 "Propagated from exog"))
 
       p_decomp <- ggplot(decomp_long, aes(x = Asset, y = Value, fill = Component)) +
         geom_bar(stat = "identity", position = "stack", alpha = 0.87) +
@@ -4081,15 +4097,15 @@ portfolio_risk_simulation <- function(
         Asset        = if(shocked_count > 0) shocked_assets_names else asset_names,
         Shock_pct    = if(shocked_count > 0) asset_shock[shocked_indices]*100 else rep(0, n_assets),
         Vol_Mult     = if(!is.null(volatility_shock) && shocked_count > 0)
-                         volatility_shock[shocked_indices] else rep(1, max(shocked_count, 1)),
+          volatility_shock[shocked_indices] else rep(1, max(shocked_count, 1)),
         stringsAsFactors = FALSE
       )
       endo_sum_df$Label <- sprintf("%+.2f%%\n(vol \u00d7%.1f)",
-                                    endo_sum_df$Shock_pct, endo_sum_df$Vol_Mult)
+                                   endo_sum_df$Shock_pct, endo_sum_df$Vol_Mult)
       endo_sum_df$Positive <- endo_sum_df$Shock_pct >= 0
 
       p_endo_sum <- ggplot(endo_sum_df, aes(x = reorder(Asset, -abs(Shock_pct)),
-                                             y = Shock_pct, fill = Positive)) +
+                                            y = Shock_pct, fill = Positive)) +
         geom_bar(stat = "identity", alpha = 0.85, width = 0.6) +
         scale_fill_manual(values = c("TRUE" = "forestgreen", "FALSE" = "#d6604d"), guide = "none") +
         geom_hline(yintercept = 0, linetype = "dashed", color = "gray40") +
@@ -4136,8 +4152,10 @@ portfolio_risk_simulation <- function(
 
     cat("\n  Building pre/post stress distribution comparison...\n")
 
-    pre_mean  <- stats_pre$mean   * 100;  pre_v95 <- stats_pre$var_95 * 100;  pre_v99 <- stats_pre$var_99 * 100
-    post_mean <- stats_post$mean  * 100; post_v95 <- stats_post$var_95 * 100; post_v99 <- stats_post$var_99 * 100
+    pre_mean  <- if (.use_median_display) stats_pre$median  * 100 else stats_pre$mean  * 100
+    post_mean <- if (.use_median_display) stats_post$median * 100 else stats_post$mean * 100
+    pre_v95 <- stats_pre$var_95 * 100;  pre_v99 <- stats_pre$var_99 * 100
+    post_v95 <- stats_post$var_95 * 100; post_v99 <- stats_post$var_99 * 100
 
     comparison_df <- data.frame(
       Return   = c(portfolio_returns_pre_flat*100, portfolio_returns_post_flat*100),
@@ -4181,7 +4199,7 @@ portfolio_risk_simulation <- function(
       geom_vline(xintercept = post_mean, color = "coral",     linetype = "solid",  linewidth = 1,   alpha = 0.8) +
       geom_vline(xintercept = pre_v95,   color = "steelblue", linetype = "dashed", linewidth = 0.7, alpha = 0.7) +
       geom_vline(xintercept = post_v95,  color = "coral",     linetype = "dashed", linewidth = 0.7, alpha = 0.7) +
-      labs(title = "Full Distribution", subtitle = "Solid=mean | Dashed=VaR95",
+      labs(title = "Full Distribution", subtitle = sprintf("Solid=%s | Dashed=VaR95", .central_label),
            x = sprintf("%s Return (%%)", data_freq_label), y = "Density") +
       theme_risk
 
@@ -4201,12 +4219,14 @@ portfolio_risk_simulation <- function(
       theme_risk
 
     stats_bar_df <- data.frame(
-      Metric      = c("Mean Return (%)", "Volatility (%)", "95% VaR (%)", "99% VaR (%)", "95% CVaR (%)"),
-      Pre_Stress  = c(stats_pre$mean*100,  stats_pre$vol*100,  stats_pre$var_95*100,  stats_pre$var_99*100,  stats_pre$cvar_95*100),
-      Post_Stress = c(stats_post$mean*100, stats_post$vol*100, stats_post$var_95*100, stats_post$var_99*100, stats_post$cvar_95*100)
+      Metric      = c(sprintf("%s Return (%%)", .central_label), "Volatility (%)", "95% VaR (%)", "99% VaR (%)", "95% CVaR (%)"),
+      Pre_Stress  = c(if(.use_median_display) stats_pre$median*100  else stats_pre$mean*100,
+                      stats_pre$vol*100,  stats_pre$var_95*100,  stats_pre$var_99*100,  stats_pre$cvar_95*100),
+      Post_Stress = c(if(.use_median_display) stats_post$median*100 else stats_post$mean*100,
+                      stats_post$vol*100, stats_post$var_95*100, stats_post$var_99*100, stats_post$cvar_95*100)
     )
     stats_long <- reshape2::melt(stats_bar_df, id.vars = "Metric",
-                                  variable.name = "Scenario", value.name = "Value")
+                                 variable.name = "Scenario", value.name = "Value")
     stats_long$Scenario <- gsub("_", "-", stats_long$Scenario)
 
     p_stats <- ggplot(stats_long, aes(x = Metric, y = Value, fill = Scenario)) +
@@ -4333,7 +4353,9 @@ portfolio_risk_simulation <- function(
     # Consolidated portfolio statistics data frame
     # Rows: Metric names | Columns: Pre_Stress, Post_Stress (NA when not stressed)
     portfolio_stats = {
-      metrics <- c("Mean (%)", "Median (%)", "Volatility (%)", "Skewness",
+      metrics <- c(sprintf("%s (%%) [primary]", .central_label),
+                   sprintf("%s (%%)", if(.use_median_display) "Mean" else "Median"),
+                   "Volatility (%)", "Skewness",
                    "Excess Kurtosis", "Sharpe (Annual)", "Annual Return (%)",
                    "Annual Vol (%)",
                    "VaR 90% (%)", "VaR 95% (%)", "VaR 99% (%)",
