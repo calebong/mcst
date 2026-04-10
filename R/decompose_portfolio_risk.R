@@ -178,7 +178,7 @@
 #' @importFrom patchwork wrap_plots plot_annotation
 #' @importFrom grDevices col2rgb rgb2hsv hsv
 #' @importFrom stats cov var sd median quantile
-#'
+#' @importFrom RColorBrewer brewer.pal brewer.pal.info
 #' @export
 decompose_portfolio_risk <- function(
     result,
@@ -631,25 +631,25 @@ decompose_portfolio_risk <- function(
 
     # ── Qualitative palette generator (hoisted: used in both stressed + unstressed paths) ──
     make_qual_pal <- function(asset_names_sorted) {
-      base_hex <- c("#E63946","#2196F3","#FF9800","#4CAF50","#9C27B0",
-                    "#00BCD4","#FF5722","#3F51B5","#CDDC39","#009688")
-      n        <- length(asset_names_sorted)
-      n_base   <- length(base_hex)
-      colours  <- character(n)
-      for (k in seq_len(n)) {
-        base_idx <- ((k - 1L) %% n_base) + 1L
-        cycle    <- (k - 1L) %/% n_base
-        if (cycle == 0L) {
-          colours[k] <- base_hex[base_idx]
-        } else {
-          rgb_vals   <- col2rgb(base_hex[base_idx]) / 255
-          hsv_vals   <- rgb2hsv(rgb_vals[1], rgb_vals[2], rgb_vals[3])
-          new_h      <- (hsv_vals[1] + cycle * 0.042) %% 1
-          new_s      <- pmin(hsv_vals[2] * (1 - cycle * 0.08), 1)
-          new_v      <- pmax(hsv_vals[3] * (1 - cycle * 0.12), 0.3)
-          colours[k] <- hsv(new_h, new_s, new_v)
-        }
+      library(RColorBrewer)
+
+      n <- length(asset_names_sorted)
+
+      # Get all qualitative ColorBrewer palettes
+      qual_col_pals <- brewer.pal.info[brewer.pal.info$category == 'qual',]
+
+      # Combine all qualitative palette colors in a fixed order
+      col_vector <- unlist(mapply(brewer.pal, qual_col_pals$maxcolors, rownames(qual_col_pals)))
+      col_vector <- unique(col_vector)
+
+      if (n <= length(col_vector)) {
+        # Use first n colors in a fixed order (reproducible)
+        colours <- col_vector[1:n]
+      } else {
+        # Interpolate for more colors
+        colours <- colorRampPalette(col_vector)(n)
       }
+
       setNames(colours, asset_names_sorted)
     }
 
