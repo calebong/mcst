@@ -61,7 +61,7 @@ library(kableExtra)
 
 The latest development version of the package can be installed using `remotes::install_github("calebong/mcst", dependencies = TRUE)`
 
-```{r install package from githhub, cache=TRUE, results='hide', message=FALSE, warning=FALSE}
+```{r install package from githhub, cache=TRUE, results='hide', message=FALSE, warning=FALSE, eval=FALSE}
 require(remotes)
 remotes::install_github("calebong/mcst", dependencies = TRUE)
 ```
@@ -538,6 +538,28 @@ result_5$stress_impact_summary %>%
 
 \newpage
 
+# Portfolio Risk Decomposition
+
+We can also extract the contribution to total portfolio risk by calling `decompose_portfolio_risk()` on the result object:
+
+```{r s5-run the decomposition, cache=TRUE, results="hide"}
+decomp_result_5 <- decompose_portfolio_risk(result_5, 
+                                            var_method = "tail")
+```
+
+\blandscape
+```{r s5-risk decomposition, fig.height=5,fig.cap="Scenario 5: Risk Decomposition (proportion) of non-stressed vs stressed scenarios."}
+decomp_result_5$plots$risk_decomposition
+```
+\elandscape
+\blandscape
+```{r s5-summary canvas, fig.height=5,fig.cap="Scenario 5: Risk Decomposition of non-stressed vs stressed scenarios."}
+decomp_result_5$plots$summary_canvas
+```
+
+\elandscape
+\newpage
+
 # Accessing Simulation Draws Directly
 
 The raw per-asset simulated draws are stored as $n_{\text{sim}} \times n_{\text{assets}}$
@@ -580,44 +602,44 @@ ggplot(nvda_comp, aes(x = Return * 100, fill = Scenario)) +
 
 \newpage
 
-# Cross-Scenario Comparison
+<!-- # Cross-Scenario Comparison -->
 
-```{r compare, echo=FALSE}
-get_stat <- function(res, metric) {
-  res$portfolio_stats$Pre_Stress[res$portfolio_stats$Metric == metric]
-}
+<!-- ```{r compare, echo=FALSE} -->
+<!-- get_stat <- function(res, metric) { -->
+<!--   res$portfolio_stats$Pre_Stress[res$portfolio_stats$Metric == metric] -->
+<!-- } -->
 
-comparison <- data.frame(
-  Scenario = c(
-    "S1: Gaussian, sample cov (no stress)",
-    "S2: t + EWMA + t-copula (no stress)",
-    "S3: t + GARCH, SPY vol x2",
-    "S4: t + GARCH, SPY -5pct / Crude +20pct",
-    "S5: t + GARCH, NVDA/TSM -5pct + SPY +2.5pct"
-  ),
-  Mean   = round(c(get_stat(result_1,"Mean (%)"),     get_stat(result_2,"Mean (%)"),
-                   get_stat(result_3,"Mean (%)"),     get_stat(result_4,"Mean (%)"),
-                   get_stat(result_5,"Mean (%)")), 4),
-  Vol    = round(c(get_stat(result_1,"Volatility (%)"),get_stat(result_2,"Volatility (%)"),
-                   get_stat(result_3,"Volatility (%)"),get_stat(result_4,"Volatility (%)"),
-                   get_stat(result_5,"Volatility (%)")), 4),
-  VaR95  = round(c(get_stat(result_1,"VaR 95% (%)"),  get_stat(result_2,"VaR 95% (%)"),
-                   get_stat(result_3,"VaR 95% (%)"),  get_stat(result_4,"VaR 95% (%)"),
-                   get_stat(result_5,"VaR 95% (%)")), 4),
-  CVaR95 = round(c(get_stat(result_1,"CVaR 95% (%)"), get_stat(result_2,"CVaR 95% (%)"),
-                   get_stat(result_3,"CVaR 95% (%)"), get_stat(result_4,"CVaR 95% (%)"),
-                   get_stat(result_5,"CVaR 95% (%)")), 4),
-  stringsAsFactors = FALSE
-)
+<!-- comparison <- data.frame( -->
+<!--   Scenario = c( -->
+<!--     "S1: Gaussian, sample cov (no stress)", -->
+<!--     "S2: t + EWMA + t-copula (no stress)", -->
+<!--     "S3: t + GARCH, SPY vol x2", -->
+<!--     "S4: t + GARCH, SPY -5pct / Crude +20pct", -->
+<!--     "S5: t + GARCH, NVDA/TSM -5pct + SPY +2.5pct" -->
+<!--   ), -->
+<!--   Mean   = round(c(get_stat(result_1,"Mean (%)"),     get_stat(result_2,"Mean (%)"), -->
+<!--                    get_stat(result_3,"Mean (%)"),     get_stat(result_4,"Mean (%)"), -->
+<!--                    get_stat(result_5,"Mean (%)")), 4), -->
+<!--   Vol    = round(c(get_stat(result_1,"Volatility (%)"),get_stat(result_2,"Volatility (%)"), -->
+<!--                    get_stat(result_3,"Volatility (%)"),get_stat(result_4,"Volatility (%)"), -->
+<!--                    get_stat(result_5,"Volatility (%)")), 4), -->
+<!--   VaR95  = round(c(get_stat(result_1,"VaR 95% (%)"),  get_stat(result_2,"VaR 95% (%)"), -->
+<!--                    get_stat(result_3,"VaR 95% (%)"),  get_stat(result_4,"VaR 95% (%)"), -->
+<!--                    get_stat(result_5,"VaR 95% (%)")), 4), -->
+<!--   CVaR95 = round(c(get_stat(result_1,"CVaR 95% (%)"), get_stat(result_2,"CVaR 95% (%)"), -->
+<!--                    get_stat(result_3,"CVaR 95% (%)"), get_stat(result_4,"CVaR 95% (%)"), -->
+<!--                    get_stat(result_5,"CVaR 95% (%)")), 4), -->
+<!--   stringsAsFactors = FALSE -->
+<!-- ) -->
 
-kable(comparison, booktabs = TRUE,
-      col.names = c("Scenario","Mean (%)","Vol (%)","VaR 95% (%)","CVaR 95% (%)"),
-      caption = "Pre-stress portfolio risk statistics across all five scenarios.") %>%
-  kable_styling(latex_options = c("hold_position","scale_down"), font_size = 9)
-```
+<!-- kable(comparison, booktabs = TRUE, -->
+<!--       col.names = c("Scenario","Mean (%)","Vol (%)","VaR 95% (%)","CVaR 95% (%)"), -->
+<!--       caption = "Pre-stress portfolio risk statistics across all five scenarios.") %>% -->
+<!--   kable_styling(latex_options = c("hold_position","scale_down"), font_size = 9) -->
+<!-- ``` -->
 
-*Scenarios 3--5 show the pre-stress baseline. The incremental stress impact is
-captured in each scenario's stress impact summary table above.*
+<!-- *Scenarios 3--5 show the pre-stress baseline. The incremental stress impact is -->
+<!-- captured in each scenario's stress impact summary table above.* -->
 
 \newpage
 
